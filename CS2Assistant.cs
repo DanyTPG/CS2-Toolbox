@@ -309,25 +309,24 @@ class CS2Assistant
             {
                 try
                 {
-                    int clickX, clickY;
-                    if (ScanForAcceptButton(out clickX, out clickY))
-                    {
-                        Log("Accept button found! Clicking...");
+                    int clickX = (int)(screenWidth * 0.4984);
+                    int clickY = (int)(screenHeight * 0.4167);
 
-                        POINT origPos;
-                        GetCursorPos(out origPos);
+                    Log(string.Format("Clicking Accept button at ({0}, {1})", clickX, clickY));
 
-                        SetCursorPos(clickX, clickY);
-                        Thread.Sleep(50);
-                        mouse_event(0x02, 0, 0, 0, 0); // MOUSEEVENTF_LEFTDOWN = 0x02
-                        Thread.Sleep(50);
-                        mouse_event(0x04, 0, 0, 0, 0); // MOUSEEVENTF_LEFTUP = 0x04
-                        Thread.Sleep(50);
-                        SetCursorPos(origPos.x, origPos.y);
+                    POINT origPos;
+                    GetCursorPos(out origPos);
 
-                        Log("Accepted match.");
-                        Thread.Sleep(5000);
-                    }
+                    SetCursorPos(clickX, clickY);
+                    Thread.Sleep(50);
+                    mouse_event(0x02, 0, 0, 0, 0); // MOUSEEVENTF_LEFTDOWN = 0x02
+                    Thread.Sleep(50);
+                    mouse_event(0x04, 0, 0, 0, 0); // MOUSEEVENTF_LEFTUP = 0x04
+                    Thread.Sleep(50);
+                    SetCursorPos(origPos.x, origPos.y);
+
+                    Log("Accepted match.");
+                    Thread.Sleep(5000);
                 }
                 catch (Exception e)
                 {
@@ -373,13 +372,7 @@ class CS2Assistant
                             keybd_event(opposing, 0, 2, 0);
                         }
 
-                        // Jitter mouse
-                        int dx = rand.Next(-5, 6);
-                        int dy = rand.Next(-5, 6);
-                        mouse_event(0x0001, (uint)dx, (uint)dy, 0, 0); // MOUSEEVENTF_MOVE = 0x0001
-                        Thread.Sleep(100);
-                        mouse_event(0x0001, (uint)-dx, (uint)-dy, 0, 0);
-                    }
+                                            }
                     catch (Exception e)
                     {
                         Log(string.Format("Error in Anti-AFK: {0}", e.Message));
