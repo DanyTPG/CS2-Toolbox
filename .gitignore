@@ -9,3 +9,5 @@ obj/
 *.pdb
 *.suo
 *.user
+graphify-out/
+_gfy_step1.ps1

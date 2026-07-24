@@ -12,11 +12,15 @@ class CS2Assistant
     static bool ANTI_AFK_ENABLED = true;
 
     static double ACCEPT_SCAN_INTERVAL = 1.0; // seconds
-    static double QUEUE_CHECK_INTERVAL = 5.0; // seconds
+    static double QUEUE_CHECK_INTERVAL = 2.0; // seconds (check for queue button frequency)
     static double QUEUE_DELAY_AFTER_MATCH = 10.0; // seconds
 
-    static double[] PLAY_COORDS = { 0.08, 0.04 }; // relative X, Y (Play button)
-    static double[] PREMIER_COORDS = { 0.28, 0.35 }; // relative X, Y (Premier Mode card)
+    // Calibrated relative coordinates (0.0 to 1.0) for this screen
+    static double[] PLAY_COORDS = { 0.5255, 0.0343 };           // Play button (top center)
+    static double[] MATCHMAKING_COORDS = { 0.4036, 0.0796 };    // Matchmaking tab
+    static double[] PREMIER_COORDS = { 0.2339, 0.1204 };        // Premier Mode tab
+    static double[] GO_COORDS = { 0.8328, 0.9583 };             // Go / Find Match button
+    static double[] QUEUE_INDICATOR_COORDS = { 0.9609, 0.0593 }; // Top-right turns green when queuing
 
     static int AFK_MIN_INTERVAL = 30; // seconds
     static int AFK_MAX_INTERVAL = 90; // seconds
@@ -237,18 +241,63 @@ class CS2Assistant
         return false;
     }
 
+    static Color GetPixelColor(double relX, double relY)
+    {
+        int x = (int)(relX * screenWidth);
+        int y = (int)(relY * screenHeight);
+        Color color = Color.Black;
+        try
+        {
+            using (Bitmap bmp = new Bitmap(1, 1, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.CopyFromScreen(x, y, 0, 0, new Size(1, 1), CopyPixelOperation.SourceCopy);
+                }
+                color = bmp.GetPixel(0, 0);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log(string.Format("GetPixelColor error: {0}", ex.Message));
+        }
+        return color;
+    }
+
+    // Returns true if the green Go / Find Match button is visible and clickable
     static bool ScanForQueueButton(bool debug = false)
     {
         if (!IsCS2Active() || !GetCursorState())
             return false;
 
-        int left = (int)(screenWidth * 0.80);
-        int top = (int)(screenHeight * 0.88);
-        int width = (int)(screenWidth * 0.18);
-        int height = (int)(screenHeight * 0.10);
+        Color pixel = GetPixelColor(GO_COORDS[0], GO_COORDS[1]);
+        double h, s, v;
+        ColorToHSV(pixel.R, pixel.G, pixel.B, out h, out s, out v);
 
-        int matchedPixels = CountGreenPixels(left, top, width, height, debug);
-        return matchedPixels > 400;
+        if (debug)
+        {
+            Log(string.Format("[DEBUG] Go Button Pixel RGB: ({0},{1},{2}) HSV: ({3:F1},{4:F2},{5:F2})", pixel.R, pixel.G, pixel.B, h, s, v));
+        }
+
+        // Go button is bright green: Hue ~100, high saturation and brightness
+        // Sampled: RGB(86,228,21) HSV(101.2, 0.91, 0.89)
+        return (h >= 80 && h <= 140 && s >= 0.50 && v >= 0.50);
+    }
+
+    // Returns true if the top-right queue indicator is green (currently searching for a match)
+    static bool IsQueuing(bool debug = false)
+    {
+        Color pixel = GetPixelColor(QUEUE_INDICATOR_COORDS[0], QUEUE_INDICATOR_COORDS[1]);
+        double h, s, v;
+        ColorToHSV(pixel.R, pixel.G, pixel.B, out h, out s, out v);
+
+        if (debug)
+        {
+            Log(string.Format("[DEBUG] Queue Indicator Pixel RGB: ({0},{1},{2}) HSV: ({3:F1},{4:F2},{5:F2})", pixel.R, pixel.G, pixel.B, h, s, v));
+        }
+
+        // Sampled while queuing: RGB(11,88,12) HSV(120.8, 0.88, 0.35)
+        return (h >= 90 && h <= 150 && s >= 0.40 && v >= 0.20);
     }
 
     // Auto-Accept Loop
@@ -354,6 +403,7 @@ class CS2Assistant
         int cursorVisibleDuration = 0;
         string queueState = "LOBBY";
         double lastNavigationTime = 0;
+        double lastScanTime = 0;
 
         while (running)
         {
@@ -388,56 +438,77 @@ class CS2Assistant
 
                         if (queueState == "LOBBY")
                         {
-                            if (currentTime - lastNavigationTime > 15)
+                            if (currentTime - lastScanTime >= QUEUE_CHECK_INTERVAL)
                             {
-                                Log("Lobby state active. Navigating to Play menu...");
-                                ClickRelative(PLAY_COORDS[0], PLAY_COORDS[1]);
-                                Thread.Sleep(1200);
+                                lastScanTime = currentTime;
 
-                                Log("Selecting Premier Mode...");
-                                ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
-                                Thread.Sleep(1200);
+                                // Already searching? Jump to QUEUING state
+                                if (IsQueuing(true))
+                                {
+                                    Log("Queue indicator green. Already searching. Entering QUEUING state.");
+                                    queueState = "QUEUING";
+                                    lastQueuedTime = currentTime;
+                                    cursorVisibleDuration = 0;
+                                }
+                                // Go button visible? Click it
+                                else if (ScanForQueueButton(true))
+                                {
+                                    Log("Go / Find Match button found! Starting queue...");
+                                    ClickRelative(GO_COORDS[0], GO_COORDS[1]);
 
-                                lastNavigationTime = currentTime;
-                            }
+                                    Log("Queued successfully. Entering QUEUING state.");
+                                    queueState = "QUEUING";
+                                    lastQueuedTime = currentTime;
+                                    cursorVisibleDuration = 0;
+                                }
+                                // Neither found: navigate Play -> Matchmaking -> Premier
+                                else if (currentTime - lastNavigationTime > 15)
+                                {
+                                    Log("Lobby state active. Navigating to Play menu...");
+                                    ClickRelative(PLAY_COORDS[0], PLAY_COORDS[1]);
+                                    Thread.Sleep(1200);
 
-                            if (ScanForQueueButton(true))
-                            {
-                                int clickX = (int)(screenWidth * 0.88); // center of Go button
-                                int clickY = (int)(screenHeight * 0.93);
+                                    Log("Selecting Matchmaking...");
+                                    ClickRelative(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
+                                    Thread.Sleep(800);
 
-                                Log("Go / Find Match button found! Starting queue...");
+                                    Log("Selecting Premier Mode...");
+                                    ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
+                                    Thread.Sleep(1200);
 
-                                POINT origPos;
-                                GetCursorPos(out origPos);
-
-                                SetCursorPos(clickX, clickY);
-                                Thread.Sleep(100);
-                                mouse_event(0x02, 0, 0, 0, 0); // MOUSEEVENTF_LEFTDOWN = 0x02
-                                Thread.Sleep(50);
-                                mouse_event(0x04, 0, 0, 0, 0); // MOUSEEVENTF_LEFTUP = 0x04
-                                Thread.Sleep(100);
-
-                                SetCursorPos(origPos.x, origPos.y);
-
-                                Log("Queued successfully. Entering QUEUING state.");
-                                queueState = "QUEUING";
-                                lastQueuedTime = currentTime;
-                                cursorVisibleDuration = 0;
-                            }
-                            else
-                            {
-                                Log("Go button not found (already queuing or on wrong screen).");
+                                    lastNavigationTime = currentTime;
+                                }
+                                else
+                                {
+                                    Log("Go button not found yet. Waiting before re-navigating...");
+                                }
                             }
                         }
                         else if (queueState == "QUEUING")
                         {
                             if (currentTime - lastQueuedTime > QUEUE_DELAY_AFTER_MATCH)
                             {
-                                if (ScanForQueueButton(false))
+                                if (currentTime - lastScanTime >= QUEUE_CHECK_INTERVAL)
                                 {
-                                    Log("Go button detected while in QUEUING state. Queue must have been cancelled. Resetting to LOBBY.");
-                                    queueState = "LOBBY";
+                                    lastScanTime = currentTime;
+
+                                    // Still searching?
+                                    if (IsQueuing(false))
+                                    {
+                                        // Keep waiting
+                                    }
+                                    // Go button back = queue cancelled
+                                    else if (ScanForQueueButton(false))
+                                    {
+                                        Log("Go button detected while in QUEUING state. Queue cancelled. Resetting to LOBBY.");
+                                        queueState = "LOBBY";
+                                    }
+                                    // Neither: might have left the menu or match started
+                                    else
+                                    {
+                                        Log("Queue indicator and Go button both gone. Resetting to LOBBY.");
+                                        queueState = "LOBBY";
+                                    }
                                 }
                             }
                         }
@@ -454,7 +525,7 @@ class CS2Assistant
                 queueState = "LOBBY";
             }
 
-            Thread.Sleep((int)(QUEUE_CHECK_INTERVAL * 1000));
+            Thread.Sleep(1000);
         }
     }
 
@@ -464,7 +535,10 @@ class CS2Assistant
         GetCursorPos(out pos);
         double relX = (double)pos.x / screenWidth;
         double relY = (double)pos.y / screenHeight;
-        Log(string.Format("Calibration Click at pixel: ({0}, {1}) -> RELATIVE COORDS: ({2:F4}, {3:F4})", pos.x, pos.y, relX, relY));
+        Color color = GetPixelColor(relX, relY);
+        double h, s, v;
+        ColorToHSV(color.R, color.G, color.B, out h, out s, out v);
+        Log(string.Format("Calibration Click at pixel: ({0}, {1}) -> RELATIVE COORDS: ({2:F4}, {3:F4}) | Color: RGB({4},{5},{6}) HSV({7:F1},{8:F2},{9:F2})", pos.x, pos.y, relX, relY, color.R, color.G, color.B, h, s, v));
         Beep(800, 100);
     }
 
