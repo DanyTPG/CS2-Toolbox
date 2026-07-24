@@ -8,9 +8,9 @@ using System.Windows.Forms;
 class CS2Assistant
 {
     // Configuration
-    static bool AUTO_ACCEPT_ENABLED = true;
-    static bool AUTO_QUEUE_ENABLED = true;
-    static bool ANTI_AFK_ENABLED = true;
+    static public bool AUTO_ACCEPT_ENABLED = true;
+    static public bool AUTO_QUEUE_ENABLED = true;
+    static public bool ANTI_AFK_ENABLED = true;
 
     static double ACCEPT_SCAN_INTERVAL = 1.0; // seconds
     static double QUEUE_CHECK_INTERVAL = 2.0; // seconds (check for queue button frequency)
@@ -69,8 +69,8 @@ class CS2Assistant
     static extern short GetAsyncKeyState(int vKey);
 
     // State Variables
-    static bool running = true;
-    static bool active = false;
+    static public bool running = true;
+    static public bool active = false;
     static int screenWidth = 1920;
     static int screenHeight = 1080;
     static AssistantForm form;
@@ -542,7 +542,7 @@ class CS2Assistant
         }
     }
 
-    static void PrintCalibrationCoords()
+    static public void PrintCalibrationCoords()
     {
         POINT pos;
         GetCursorPos(out pos);
@@ -555,7 +555,7 @@ class CS2Assistant
         Beep(800, 100);
     }
 
-    static void ToggleAssistant()
+    static public void ToggleAssistant()
     {
         active = !active;
         string status = active ? "ACTIVE" : "INACTIVE";
@@ -570,7 +570,7 @@ class CS2Assistant
         }
     }
 
-    static void StopAssistant()
+    static public void StopAssistant()
     {
         active = false;
         running = false;
