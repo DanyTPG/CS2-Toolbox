@@ -13,7 +13,7 @@ compile.bat
 ```
 
 Compiles `CS2Assistant.cs` → `CS2Assistant.exe` using:
-`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /unsafe /target:exe /r:System.Drawing.dll`
+`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /unsafe /target:exe /r:System.Drawing.dll /r:System.Windows.Forms.dll`
 
 If the exe is locked (still running):
 ```cmd
@@ -37,22 +37,30 @@ Compiler is **C# 5 only** (Framework 4.x `csc`). Forbidden:
 
 ## Architecture
 
-Everything lives in one class: `CS2Assistant.cs`.
+Everything lives in one file: `CS2Assistant.cs` (two classes).
+
+### Classes
+
+| Class | Role |
+|-------|------|
+| `CS2Assistant` | Core logic: threads, pixel scanning, state machine, Win32 P/Invokes |
+| `AssistantForm` | WinForms GUI: feature toggles, start/stop, calibration, log display |
 
 ### Threads
 
 | Thread | Role |
 |--------|------|
-| Main | Hotkey poll (`F9` cal, `F10` toggle, `F11` exit) every 50ms |
+| Main (GUI) | `Application.Run(form)` — WinForms message loop + F9/F10/F11 via `KeyPreview` |
 | `AutoAcceptLoop` | Center-screen green Accept button via region pixel scan |
 | `AutoQueueLoop` | Lobby state machine: navigate menus, click Go, track queue |
-| `AntiAfkLoop` | In-match only: random WASD + opposing key + mouse jitter |
+| `AntiAfkLoop` | In-match only: random WASD + opposing key |
 
-Shared state: `running`, `active` (toggled by F10). Feature flags and timing at top of file as static fields.
+Shared state: `running`, `active` (toggled by F10/GUI button). Feature flags and timing at top of file as static fields. Console window is hidden; all logging goes to the GUI log box via `BeginInvoke`.
 
 ### State detection (no game memory)
 
 - **In-match vs menu**: `GetCursorInfo` — cursor hidden = in-match; visible = lobby/menu. Anti-AFK only when hidden; auto-queue only when visible ≥10s continuous (avoids ESC-menu false positives).
+- **GUI**: `AssistantForm` with checkboxes for each feature, Start/Stop button, Calibrate button, scrolling log, uptime timer. F9/F10/F11 handled via `KeyPreview` on the form.
 - **CS2 focused**: `GetForegroundWindow` + title contains `"Counter-Strike 2"`.
 - **Accept ready**: GDI+ `CopyFromScreen` on center 30% box; HSV green blob (Hue 80–170).
 - **Go button ready**: single pixel at `GO_COORDS` — bright green (Hue ~101).

@@ -8,7 +8,7 @@ if not exist "%CSC_PATH%" (
 )
 
 echo Compiling CS2Assistant.cs...
-"%CSC_PATH%" /unsafe /target:exe /out:CS2Assistant.exe /r:System.Drawing.dll CS2Assistant.cs
+"%CSC_PATH%" /unsafe /target:exe /out:CS2Assistant.exe /r:System.Drawing.dll /r:System.Windows.Forms.dll CS2Assistant.cs
 
 if %ERRORLEVEL% equ 0 (
     echo Compilation successful! Created CS2Assistant.exe

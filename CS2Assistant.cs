@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Windows.Forms;
 
 class CS2Assistant
 {
@@ -72,10 +73,15 @@ class CS2Assistant
     static bool active = false;
     static int screenWidth = 1920;
     static int screenHeight = 1080;
+    static AssistantForm form;
 
     static void Log(string message)
     {
-        Console.WriteLine(string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, message));
+        string formatted = string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, message);
+        if (form != null && !form.IsDisposed)
+        {
+            form.BeginInvoke(new Action(() => form.AppendLog(formatted)));
+        }
     }
 
     static bool GetCursorState()
@@ -555,6 +561,10 @@ class CS2Assistant
         active = !active;
         string status = active ? "ACTIVE" : "INACTIVE";
         Log(string.Format("Assistant is now {0}", status));
+        if (form != null && !form.IsDisposed)
+        {
+            form.BeginInvoke(new Action(() => form.UpdateState()));
+        }
         if (active)
         {
             Beep(1000, 200);
@@ -566,8 +576,10 @@ class CS2Assistant
         active = false;
         running = false;
         Log("Exiting CS2 Match Assistant...");
-        Beep(600, 300);
-        Environment.Exit(0);
+        if (form != null && !form.IsDisposed)
+        {
+            form.BeginInvoke(new Action(() => Application.Exit()));
+        }
     }
 
     static void Beep(int frequency, int duration)
@@ -583,59 +595,265 @@ class CS2Assistant
     [DllImport("user32.dll")]
     static extern int GetSystemMetrics(int nIndex);
 
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+
+    [STAThread]
     static void Main()
     {
         // 0 = SM_CXSCREEN, 1 = SM_CYSCREEN
         screenWidth = GetSystemMetrics(0);
         screenHeight = GetSystemMetrics(1);
 
-        Console.WriteLine("=========================================");
-        Console.WriteLine("      CS2 Match Assistant v1.0 (C#)");
-        Console.WriteLine("      (VAC Safe - External Only)");
-        Console.WriteLine("=========================================");
-        Console.WriteLine(string.Format("Screen Resolution: {0}x{1}", screenWidth, screenHeight));
-        Console.WriteLine("Calibrate Hotkey : F9");
-        Console.WriteLine("Toggle Hotkey    : F10");
-        Console.WriteLine("Exit Hotkey      : F11");
-        Console.WriteLine(string.Format("Auto-Accept      : {0}", AUTO_ACCEPT_ENABLED ? "Enabled" : "Disabled"));
-        Console.WriteLine(string.Format("Auto-Queue       : {0}", AUTO_QUEUE_ENABLED ? "Enabled" : "Disabled"));
-        Console.WriteLine(string.Format("Anti-AFK         : {0}", ANTI_AFK_ENABLED ? "Enabled" : "Disabled"));
-        Console.WriteLine("-----------------------------------------");
-        Console.WriteLine("INSTRUCTIONS:");
-        Console.WriteLine("1. Start CS2 in Windowed or Borderless Windowed mode.");
-        Console.WriteLine("2. Hover mouse and press F9 to calibrate/find coordinates.");
-        Console.WriteLine("3. Press F10 in-game to toggle the assistant on/off.");
-        Console.WriteLine("=========================================");
+        Application.EnableVisualStyles();
 
-        // Start threads
+        // Start background threads
         new Thread(AutoAcceptLoop) { IsBackground = true }.Start();
         new Thread(AntiAfkLoop) { IsBackground = true }.Start();
         new Thread(AutoQueueLoop) { IsBackground = true }.Start();
 
-        // Hotkey polling loop in main thread
-        while (running)
+        // Launch GUI
+        form = new AssistantForm();
+        Application.Run(form);
+    }
+}
+
+class AssistantForm : Form
+{
+    private TextBox logBox;
+    private Label statusLabel;
+    private Button btnToggle;
+    private Button btnCalibrate;
+    private CheckBox chkAccept;
+    private CheckBox chkQueue;
+    private CheckBox chkAfk;
+    private Label lblUptime;
+    private System.Windows.Forms.Timer timer;
+    private DateTime startTime;
+    private System.IntPtr consoleHandle;
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    public AssistantForm()
+    {
+        // Hide console window
+        consoleHandle = CS2Assistant.GetConsoleWindow();
+        if (consoleHandle != System.IntPtr.Zero)
+            ShowWindow(consoleHandle, 0);
+
+        startTime = DateTime.Now;
+        InitializeComponents();
+        UpdateState();
+
+        timer = new System.Windows.Forms.Timer();
+        timer.Interval = 1000;
+        timer.Tick += Timer_Tick;
+        timer.Start();
+    }
+
+    private void InitializeComponents()
+    {
+        this.Text = "CS2 Match Assistant v1.0";
+        this.Size = new System.Drawing.Size(360, 440);
+        this.FormBorderStyle = FormBorderStyle.FixedSingle;
+        this.MaximizeBox = false;
+        this.StartPosition = FormStartPosition.CenterScreen;
+        this.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+        this.ForeColor = System.Drawing.Color.White;
+        this.KeyPreview = true;
+        this.KeyDown += OnKeyDown;
+
+        // Status label
+        statusLabel = new Label();
+        statusLabel.Text = "INACTIVE";
+        statusLabel.Font = new System.Drawing.Font("Segoe UI", 14, System.Drawing.FontStyle.Bold);
+        statusLabel.ForeColor = System.Drawing.Color.Red;
+        statusLabel.Location = new System.Drawing.Point(12, 10);
+        statusLabel.AutoSize = true;
+        this.Controls.Add(statusLabel);
+
+        // Feature toggles
+        chkAccept = new CheckBox();
+        chkAccept.Text = "Auto-Accept";
+        chkAccept.Checked = true;
+        chkAccept.Font = new System.Drawing.Font("Segoe UI", 10);
+        chkAccept.ForeColor = System.Drawing.Color.White;
+        chkAccept.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+        chkAccept.Location = new System.Drawing.Point(15, 50);
+        chkAccept.Size = new System.Drawing.Size(180, 25);
+        chkAccept.CheckedChanged += ChkAccept_CheckedChanged;
+        this.Controls.Add(chkAccept);
+
+        chkQueue = new CheckBox();
+        chkQueue.Text = "Auto-Queue (Premier)";
+        chkQueue.Checked = true;
+        chkQueue.Font = new System.Drawing.Font("Segoe UI", 10);
+        chkQueue.ForeColor = System.Drawing.Color.White;
+        chkQueue.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+        chkQueue.Location = new System.Drawing.Point(15, 80);
+        chkQueue.Size = new System.Drawing.Size(180, 25);
+        chkQueue.CheckedChanged += ChkQueue_CheckedChanged;
+        this.Controls.Add(chkQueue);
+
+        chkAfk = new CheckBox();
+        chkAfk.Text = "Anti-AFK";
+        chkAfk.Checked = true;
+        chkAfk.Font = new System.Drawing.Font("Segoe UI", 10);
+        chkAfk.ForeColor = System.Drawing.Color.White;
+        chkAfk.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+        chkAfk.Location = new System.Drawing.Point(15, 110);
+        chkAfk.Size = new System.Drawing.Size(180, 25);
+        chkAfk.CheckedChanged += ChkAfk_CheckedChanged;
+        this.Controls.Add(chkAfk);
+
+        // Buttons
+        btnToggle = new Button();
+        btnToggle.Text = "Start";
+        btnToggle.Font = new System.Drawing.Font("Segoe UI", 10, System.Drawing.FontStyle.Bold);
+        btnToggle.BackColor = System.Drawing.Color.FromArgb(0, 120, 0);
+        btnToggle.ForeColor = System.Drawing.Color.White;
+        btnToggle.FlatStyle = FlatStyle.Flat;
+        btnToggle.Location = new System.Drawing.Point(15, 150);
+        btnToggle.Size = new System.Drawing.Size(150, 35);
+        btnToggle.Click += BtnToggle_Click;
+        this.Controls.Add(btnToggle);
+
+        btnCalibrate = new Button();
+        btnCalibrate.Text = "Calibrate (F9)";
+        btnCalibrate.Font = new System.Drawing.Font("Segoe UI", 10);
+        btnCalibrate.BackColor = System.Drawing.Color.FromArgb(50, 50, 50);
+        btnCalibrate.ForeColor = System.Drawing.Color.White;
+        btnCalibrate.FlatStyle = FlatStyle.Flat;
+        btnCalibrate.Location = new System.Drawing.Point(175, 150);
+        btnCalibrate.Size = new System.Drawing.Size(150, 35);
+        btnCalibrate.Click += BtnCalibrate_Click;
+        this.Controls.Add(btnCalibrate);
+
+        // Log area
+        Label lblLog = new Label();
+        lblLog.Text = "Log:";
+        lblLog.Font = new System.Drawing.Font("Segoe UI", 9);
+        lblLog.ForeColor = System.Drawing.Color.Gray;
+        lblLog.Location = new System.Drawing.Point(12, 200);
+        lblLog.AutoSize = true;
+        this.Controls.Add(lblLog);
+
+        logBox = new TextBox();
+        logBox.Multiline = true;
+        logBox.ReadOnly = true;
+        logBox.ScrollBars = ScrollBars.Vertical;
+        logBox.BackColor = System.Drawing.Color.FromArgb(20, 20, 20);
+        logBox.ForeColor = System.Drawing.Color.LightGreen;
+        logBox.Font = new System.Drawing.Font("Consolas", 9);
+        logBox.Location = new System.Drawing.Point(12, 220);
+        logBox.Size = new System.Drawing.Size(320, 140);
+        this.Controls.Add(logBox);
+
+        // Uptime
+        lblUptime = new Label();
+        lblUptime.Text = "Uptime: 00:00:00";
+        lblUptime.Font = new System.Drawing.Font("Segoe UI", 9);
+        lblUptime.ForeColor = System.Drawing.Color.Gray;
+        lblUptime.Location = new System.Drawing.Point(12, 370);
+        lblUptime.AutoSize = true;
+        this.Controls.Add(lblUptime);
+
+        // Hotkey hint
+        Label lblHotkeys = new Label();
+        lblHotkeys.Text = "Hotkeys: F9=Calibrate  F10=Toggle  F11=Exit";
+        lblHotkeys.Font = new System.Drawing.Font("Segoe UI", 8);
+        lblHotkeys.ForeColor = System.Drawing.Color.Gray;
+        lblHotkeys.Location = new System.Drawing.Point(12, 390);
+        lblHotkeys.AutoSize = true;
+        this.Controls.Add(lblHotkeys);
+    }
+
+    public void AppendLog(string message)
+    {
+        if (logBox != null && !logBox.IsDisposed)
         {
-            // F9
-            if ((GetAsyncKeyState(0x78) & 0x8000) != 0)
-            {
-                PrintCalibrationCoords();
-                Thread.Sleep(300); // Debounce
-            }
-
-            // F10
-            if ((GetAsyncKeyState(0x79) & 0x8000) != 0)
-            {
-                ToggleAssistant();
-                Thread.Sleep(300); // Debounce
-            }
-
-            // F11
-            if ((GetAsyncKeyState(0x7A) & 0x8000) != 0)
-            {
-                StopAssistant();
-            }
-
-            Thread.Sleep(50);
+            logBox.AppendText(message + Environment.NewLine);
         }
+    }
+
+    public void UpdateState()
+    {
+        if (statusLabel == null || statusLabel.IsDisposed) return;
+        if (CS2Assistant.active)
+        {
+            statusLabel.Text = "ACTIVE";
+            statusLabel.ForeColor = System.Drawing.Color.LimeGreen;
+            btnToggle.Text = "Stop";
+            btnToggle.BackColor = System.Drawing.Color.FromArgb(180, 0, 0);
+        }
+        else
+        {
+            statusLabel.Text = "INACTIVE";
+            statusLabel.ForeColor = System.Drawing.Color.Red;
+            btnToggle.Text = "Start";
+            btnToggle.BackColor = System.Drawing.Color.FromArgb(0, 120, 0);
+        }
+    }
+
+    private void Timer_Tick(object sender, EventArgs e)
+    {
+        TimeSpan elapsed = DateTime.Now - startTime;
+        lblUptime.Text = string.Format("Uptime: {0:00}:{1:00}:{2:00}",
+            (int)elapsed.TotalHours, elapsed.Minutes, elapsed.Seconds);
+    }
+
+    private void OnKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.F9)
+        {
+            CS2Assistant.PrintCalibrationCoords();
+            e.Handled = true;
+        }
+        else if (e.KeyCode == Keys.F10)
+        {
+            CS2Assistant.ToggleAssistant();
+            e.Handled = true;
+        }
+        else if (e.KeyCode == Keys.F11)
+        {
+            CS2Assistant.StopAssistant();
+            e.Handled = true;
+        }
+    }
+
+    private void ChkAccept_CheckedChanged(object sender, EventArgs e)
+    {
+        CS2Assistant.AUTO_ACCEPT_ENABLED = chkAccept.Checked;
+    }
+
+    private void ChkQueue_CheckedChanged(object sender, EventArgs e)
+    {
+        CS2Assistant.AUTO_QUEUE_ENABLED = chkQueue.Checked;
+    }
+
+    private void ChkAfk_CheckedChanged(object sender, EventArgs e)
+    {
+        CS2Assistant.ANTI_AFK_ENABLED = chkAfk.Checked;
+    }
+
+    private void BtnToggle_Click(object sender, EventArgs e)
+    {
+        CS2Assistant.ToggleAssistant();
+    }
+
+    private void BtnCalibrate_Click(object sender, EventArgs e)
+    {
+        CS2Assistant.PrintCalibrationCoords();
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        CS2Assistant.running = false;
+        CS2Assistant.active = false;
+        timer.Stop();
+        if (consoleHandle != System.IntPtr.Zero)
+            ShowWindow(consoleHandle, 1);
+        base.OnFormClosing(e);
     }
 }
