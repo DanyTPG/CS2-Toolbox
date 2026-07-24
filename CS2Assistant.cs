@@ -309,24 +309,35 @@ class CS2Assistant
             {
                 try
                 {
-                    int clickX = (int)(screenWidth * 0.4984);
-                    int clickY = (int)(screenHeight * 0.4167);
+                    // Scan center screen for green pixels (Accept button)
+                    int left = (int)(screenWidth * 0.35);
+                    int top = (int)(screenHeight * 0.35);
+                    int width = (int)(screenWidth * 0.30);
+                    int height = (int)(screenHeight * 0.30);
+                    int matchedPixels = CountGreenPixels(left, top, width, height);
 
-                    Log(string.Format("Clicking Accept button at ({0}, {1})", clickX, clickY));
+                    if (matchedPixels > 500)
+                    {
+                        // Accept button visible - click at calibrated coords
+                        int clickX = (int)(screenWidth * 0.4984);
+                        int clickY = (int)(screenHeight * 0.4167);
 
-                    POINT origPos;
-                    GetCursorPos(out origPos);
+                        Log(string.Format("Accept button found ({0} green px). Clicking ({1}, {2})", matchedPixels, clickX, clickY));
 
-                    SetCursorPos(clickX, clickY);
-                    Thread.Sleep(50);
-                    mouse_event(0x02, 0, 0, 0, 0); // MOUSEEVENTF_LEFTDOWN = 0x02
-                    Thread.Sleep(50);
-                    mouse_event(0x04, 0, 0, 0, 0); // MOUSEEVENTF_LEFTUP = 0x04
-                    Thread.Sleep(50);
-                    SetCursorPos(origPos.x, origPos.y);
+                        POINT origPos;
+                        GetCursorPos(out origPos);
 
-                    Log("Accepted match.");
-                    Thread.Sleep(5000);
+                        SetCursorPos(clickX, clickY);
+                        Thread.Sleep(50);
+                        mouse_event(0x02, 0, 0, 0, 0); // MOUSEEVENTF_LEFTDOWN = 0x02
+                        Thread.Sleep(50);
+                        mouse_event(0x04, 0, 0, 0, 0); // MOUSEEVENTF_LEFTUP = 0x04
+                        Thread.Sleep(50);
+                        SetCursorPos(origPos.x, origPos.y);
+
+                        Log("Accepted match.");
+                        Thread.Sleep(5000);
+                    }
                 }
                 catch (Exception e)
                 {
