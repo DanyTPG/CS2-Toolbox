@@ -388,8 +388,7 @@ class CS2Assistant
                             Thread.Sleep(rand.Next(100, 300));
                             keybd_event(opposing, 0, 2, 0);
                         }
-
-                                            }
+                    }
                     catch (Exception e)
                     {
                         Log(string.Format("Error in Anti-AFK: {0}", e.Message));
