@@ -351,7 +351,7 @@ class CS2Assistant
                     Log("Simulating anti-AFK movement...");
                     try
                     {
-                        byte key = AFK_KEYS[rand.Next(AFK_KEYS.Length)];
+                        byte key = AFK_KEYS[rand.Next(4)]; // LockArray index check
 
                         // Press key
                         keybd_event(key, 0, 0, 0); // Key down
@@ -374,8 +374,8 @@ class CS2Assistant
                         }
 
                         // Jitter mouse
-                        int dx = rand.Next(0, 2) == 0 ? -5 : 5;
-                        int dy = rand.Next(0, 2) == 0 ? -5 : 5;
+                        int dx = rand.Next(-5, 6);
+                        int dy = rand.Next(-5, 6);
                         mouse_event(0x0001, (uint)dx, (uint)dy, 0, 0); // MOUSEEVENTF_MOVE = 0x0001
                         Thread.Sleep(100);
                         mouse_event(0x0001, (uint)-dx, (uint)-dy, 0, 0);
@@ -387,8 +387,8 @@ class CS2Assistant
                 }
             }
 
-            int sleepDur = rand.Next(AFK_MIN_INTERVAL, AFK_MAX_INTERVAL);
-            for (int i = 0; i < sleepDur; i++)
+            int sleepMs = rand.Next(AFK_MIN_INTERVAL * 1000, AFK_MAX_INTERVAL * 1000);
+            for (int i = 0; i < sleepMs; i += 1000)
             {
                 if (!running || !active) break;
                 Thread.Sleep(1000);
@@ -511,6 +511,10 @@ class CS2Assistant
                                     }
                                 }
                             }
+                        }
+                        else
+                        {
+                            lastNavigationTime = currentTime;
                         }
                     }
                 }
