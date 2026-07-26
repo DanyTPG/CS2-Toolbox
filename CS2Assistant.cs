@@ -625,8 +625,14 @@ class CS2Assistant
 
                     // GSI fast-path: skip cursor wait when we know we're in menus
                     bool confirmedLobby = gsiConnected && (gsMapPhase == "blank" || gsMapPhase == "game_over");
-                    // Pixel fallback: check for match accepted (red ban/pick) before queuing
-                    bool isMatchAccepted = !gsiConnected && IsMatchAccepted();
+                    // Pixel check: red ban/pick pixel indicates match was accepted
+                    bool isMatchAccepted = IsMatchAccepted();
+
+                    // Don't treat as lobby if match is accepted (ban/pick phase)
+                    if (isMatchAccepted)
+                    {
+                        confirmedLobby = false;
+                    }
 
                     if ((confirmedLobby || isMatchAccepted) && cursorVisibleDuration < 10)
                     {
