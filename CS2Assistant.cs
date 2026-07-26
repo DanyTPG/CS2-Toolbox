@@ -160,7 +160,7 @@ class CS2Assistant
         HttpListener listener = new HttpListener();
         try
         {
-            listener.Prefixes.Add(string.Format("http://+:{0}/", GSI_PORT));
+            listener.Prefixes.Add(string.Format("http://127.0.0.1:{0}/", GSI_PORT));
             listener.Start();
             Log(string.Format("GSI listener started on port {0}", GSI_PORT));
         }
