@@ -454,6 +454,22 @@ class CS2Assistant
         return (h >= 90 && h <= 150 && s >= 0.40 && v >= 0.20);
     }
 
+    // Returns true if the center pixel indicates match acceptance (red ban/pick phase)
+    // Prevents re-queueing when GSI still shows "blank" after accepting
+    static bool IsMatchAccepted()
+    {
+        if (!IsCS2Active())
+            return false;
+
+        Color pixel = GetPixelColor(0.5005, 0.5565);
+        double h, s, v;
+        ColorToHSV(pixel.R, pixel.G, pixel.B, out h, out s, out v);
+
+        // Red color in HSV: Hue ~0 (or ~360), moderate-high saturation
+        // Sampled: RGB(168,77,76) HSV(0.7, 0.55, 0.66)
+        return (h <= 10 || h >= 350) && s >= 0.40 && v >= 0.50;
+    }
+
     // Auto-Accept Loop
     static void AutoAcceptLoop()
     {
@@ -609,7 +625,10 @@ class CS2Assistant
 
                     // GSI fast-path: skip cursor wait when we know we're in menus
                     bool confirmedLobby = gsiConnected && (gsMapPhase == "blank" || gsMapPhase == "game_over");
-                    if (confirmedLobby && cursorVisibleDuration < 10)
+                    // Pixel fallback: check for match accepted (red ban/pick) before queuing
+                    bool isMatchAccepted = !gsiConnected && IsMatchAccepted();
+
+                    if ((confirmedLobby || isMatchAccepted) && cursorVisibleDuration < 10)
                     {
                         cursorVisibleDuration = 10;
                     }
@@ -631,6 +650,11 @@ class CS2Assistant
                                     queueState = "QUEUING";
                                     lastQueuedTime = currentTime;
                                     cursorVisibleDuration = 0;
+                                }
+                                // Match already accepted (red ban/pick pixel)? Don't re-queue
+                                else if (isMatchAccepted)
+                                {
+                                    Log("Match accepted detected (red ban/pick pixel). Not queuing.");
                                 }
                                 // Go button visible? Click it
                                 else if (ScanForQueueButton(true))
