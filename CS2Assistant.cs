@@ -792,6 +792,25 @@ class CS2Assistant
         new Thread(GsiListenerLoop) { IsBackground = true }.Start();
         new Thread(GsiHeartbeatCheckLoop) { IsBackground = true }.Start();
 
+        // Auto-install GSI cfg to CS2 cfg folder
+        try
+        {
+            string sourcePath = System.AppDomain.CurrentDomain.BaseDirectory + "gamestate_integration_cs2assistant.cfg";
+            string cs2ConfigDir = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData) + @"\Steam\steamapps\common\Counter-Strike 2\game\csgo\cfg\";
+            string targetConfig = cs2ConfigDir + "gamestate_integration_cs2assistant.cfg";
+
+            if (!System.IO.File.Exists(targetConfig) && System.IO.File.Exists(sourcePath))
+            {
+                System.IO.Directory.CreateDirectory(cs2ConfigDir);
+                System.IO.File.Copy(sourcePath, targetConfig);
+                Log("Auto-installed GSI config to CS2 cfg folder.");
+            }
+        }
+        catch (Exception copyEx)
+        {
+            Log(string.Format("Failed to auto-install GSI config: {0}", copyEx.Message));
+        }
+
         // Launch GUI
         form = new AssistantForm();
         Application.Run(form);
@@ -803,21 +822,16 @@ class AssistantForm : Form
     private TextBox logBox;
     private Label statusLabel;
     private Button btnToggle;
-    private Button btnCalibrate;
     private CheckBox chkAccept;
     private CheckBox chkQueue;
     private CheckBox chkAfk;
     private Label lblUptime;
     private System.Windows.Forms.Timer timer;
     private DateTime startTime;
-    private System.IntPtr consoleHandle;
     private Label lblGsiStatus;
 
     public AssistantForm()
     {
-        // Console already hidden in Main; keep handle for restore on exit
-        consoleHandle = CS2Assistant.GetConsoleWindow();
-
         startTime = DateTime.Now;
         InitializeComponents();
         UpdateState();
@@ -895,17 +909,6 @@ class AssistantForm : Form
         btnToggle.Click += BtnToggle_Click;
         this.Controls.Add(btnToggle);
 
-        btnCalibrate = new Button();
-        btnCalibrate.Text = "Calibrate (F9)";
-        btnCalibrate.Font = new System.Drawing.Font("Segoe UI", 10);
-        btnCalibrate.BackColor = System.Drawing.Color.FromArgb(50, 50, 50);
-        btnCalibrate.ForeColor = System.Drawing.Color.White;
-        btnCalibrate.FlatStyle = FlatStyle.Flat;
-        btnCalibrate.Location = new System.Drawing.Point(175, 150);
-        btnCalibrate.Size = new System.Drawing.Size(150, 35);
-        btnCalibrate.Click += BtnCalibrate_Click;
-        this.Controls.Add(btnCalibrate);
-
         // Log area
         Label lblLog = new Label();
         lblLog.Text = "Log:";
@@ -937,7 +940,7 @@ class AssistantForm : Form
 
         // Hotkey hint
         Label lblHotkeys = new Label();
-        lblHotkeys.Text = "Hotkeys: F9=Calibrate  F10=Toggle  F11=Exit";
+        lblHotkeys.Text = "Hotkeys: F10=Toggle  F11=Exit";
         lblHotkeys.Font = new System.Drawing.Font("Segoe UI", 8);
         lblHotkeys.ForeColor = System.Drawing.Color.Gray;
         lblHotkeys.Location = new System.Drawing.Point(12, 410);
@@ -1001,12 +1004,7 @@ class AssistantForm : Form
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.KeyCode == Keys.F9)
-        {
-            CS2Assistant.PrintCalibrationCoords();
-            e.Handled = true;
-        }
-        else if (e.KeyCode == Keys.F10)
+        if (e.KeyCode == Keys.F10)
         {
             CS2Assistant.ToggleAssistant();
             e.Handled = true;
@@ -1038,18 +1036,11 @@ class AssistantForm : Form
         CS2Assistant.ToggleAssistant();
     }
 
-    private void BtnCalibrate_Click(object sender, EventArgs e)
-    {
-        CS2Assistant.PrintCalibrationCoords();
-    }
-
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         CS2Assistant.running = false;
         CS2Assistant.active = false;
         timer.Stop();
-        if (consoleHandle != System.IntPtr.Zero)
-            CS2Assistant.ShowWindow(consoleHandle, 1);
         base.OnFormClosing(e);
     }
 }
