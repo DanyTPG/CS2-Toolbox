@@ -23,6 +23,7 @@ jobs:
           "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" ^
             /target:winexe ^
             /optimize+ ^
+            /unsafe ^
             /out:CS2Assistant.exe ^
             CS2Assistant.cs
 
