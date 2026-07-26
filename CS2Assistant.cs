@@ -75,6 +75,16 @@ class CS2Assistant
     [DllImport("user32.dll")]
     static extern short GetAsyncKeyState(int vKey);
 
+    [DllImport("user32.dll")]
+    static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    const int HOTKEY_TOGGLE = 1;
+    const int HOTKEY_EXIT = 2;
+    const uint MOD_NONE = 0x0000;
+
     // State Variables
     static public bool running = true;
     static public bool active = false;
@@ -892,6 +902,10 @@ class AssistantForm : Form
         this.ForeColor = System.Drawing.Color.White;
         this.KeyPreview = true;
         this.KeyDown += OnKeyDown;
+
+        // Register global hotkeys
+        RegisterHotKey(this.Handle, HOTKEY_TOGGLE, MOD_NONE, (uint)Keys.F10);
+        RegisterHotKey(this.Handle, HOTKEY_EXIT, MOD_NONE, (uint)Keys.F11);
 
         // Status label
         statusLabel = new Label();
