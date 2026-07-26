@@ -186,7 +186,7 @@ class CS2Assistant
                 {
                     Thread.Sleep(500);
                     waited += 500;
-                    if (waited > 15000 && !loggedWaiting)
+                    if (waited > 30000 && !loggedWaiting)
                     {
                         loggedWaiting = true;
                         Log("No GSI data. Place gamestate_integration_cs2assistant.cfg in CS2 cfg folder.");
@@ -461,6 +461,13 @@ class CS2Assistant
         {
             if (active && AUTO_ACCEPT_ENABLED)
             {
+                // GSI gating: only accept when in menu state
+                if (gsiConnected && gsMapPhase != "blank")
+                {
+                    Thread.Sleep((int)(ACCEPT_SCAN_INTERVAL * 1000));
+                    continue;
+                }
+
                 try
                 {
                     // Scan center screen for green pixels (Accept button)
