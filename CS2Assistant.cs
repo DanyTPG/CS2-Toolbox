@@ -4,16 +4,18 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 class CS2Assistant
 {
     // Configuration
-    static public bool AUTO_ACCEPT_ENABLED = true;
-    static public bool AUTO_QUEUE_ENABLED = true;
-    static public bool ANTI_AFK_ENABLED = true;
+    static public volatile bool AUTO_ACCEPT_ENABLED = true;
+    static public volatile bool AUTO_QUEUE_ENABLED = true;
+    static public volatile bool ANTI_AFK_ENABLED = true;
 
     static double ACCEPT_SCAN_INTERVAL = 1.0; // seconds
     static double QUEUE_CHECK_INTERVAL = 2.0; // seconds (check for queue button frequency)
@@ -66,37 +68,124 @@ class CS2Assistant
     [DllImport("user32.dll")]
     static extern bool SetCursorPos(int X, int Y);
 
-    [DllImport("user32.dll")]
-    static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
+    // SendInput replaces the legacy mouse_event/keybd_event calls (Microsoft documents
+    // both as superseded by SendInput for synthesizing input).
+    [StructLayout(LayoutKind.Sequential)]
+    struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
 
-    [DllImport("user32.dll")]
-    static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+    [StructLayout(LayoutKind.Sequential)]
+    struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
 
-    [DllImport("user32.dll")]
-    static extern short GetAsyncKeyState(int vKey);
+    [StructLayout(LayoutKind.Sequential)]
+    struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
+    }
 
-    [DllImport("user32.dll")]
-    static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+    [StructLayout(LayoutKind.Explicit)]
+    struct InputUnion
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+        [FieldOffset(0)] public HARDWAREINPUT hi;
+    }
 
-    [DllImport("user32.dll")]
-    static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    [StructLayout(LayoutKind.Sequential)]
+    struct INPUT
+    {
+        public uint type;
+        public InputUnion U;
+    }
 
-    const int HOTKEY_TOGGLE = 1;
-    const int HOTKEY_EXIT = 2;
-    const uint MOD_NONE = 0x0000;
+    const uint INPUT_MOUSE = 0;
+    const uint INPUT_KEYBOARD = 1;
+    const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    const uint KEYEVENTF_KEYUP = 0x0002;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    static void SendMouseDown()
+    {
+        INPUT[] inputs = new INPUT[1];
+        inputs[0].type = INPUT_MOUSE;
+        inputs[0].U.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+        SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    static void SendMouseUp()
+    {
+        INPUT[] inputs = new INPUT[1];
+        inputs[0].type = INPUT_MOUSE;
+        inputs[0].U.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+        SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    static void SendKeyDown(byte vk)
+    {
+        INPUT[] inputs = new INPUT[1];
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].U.ki.wVk = vk;
+        SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    static void SendKeyUp(byte vk)
+    {
+        INPUT[] inputs = new INPUT[1];
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].U.ki.wVk = vk;
+        inputs[0].U.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
 
     // State Variables
-    static public bool running = true;
-    static public bool active = false;
+    static public volatile bool running = true;
+    static public volatile bool active = false;
     static int screenWidth = 1920;
     static int screenHeight = 1080;
     static AssistantForm form;
 
     // Game State Integration (GSI) fields
-    static public string gsMapPhase = "blank";
-    static public string gsRoundPhase = "end";
-    static public bool gsiConnected = false;
+    static public volatile string gsMapPhase = "blank";
+    static public volatile string gsRoundPhase = "end";
+    static public volatile bool gsiConnected = false;
     static DateTime gsiLastUpdate = DateTime.MinValue;
+
+    // Sound utilities - replace single beep with two for deactivation
+    static void BeepSequence(int[] frequencies, int duration)
+    {
+        try
+        {
+            for (int i = 0; i < frequencies.Length; i++)
+            {
+                Console.Beep(frequencies[i], duration);
+                if (i < frequencies.Length - 1)
+                    Thread.Sleep(100);
+            }
+        }
+        catch
+        {
+            // Silently ignore if sound fails
+        }
+    }
 
     static void Log(string message)
     {
@@ -276,9 +365,9 @@ class CS2Assistant
 
         SetCursorPos(absX, absY);
         Thread.Sleep(100);
-        mouse_event(0x02, 0, 0, 0, 0); // MOUSEEVENTF_LEFTDOWN = 0x02
+        SendMouseDown();
         Thread.Sleep(50);
-        mouse_event(0x04, 0, 0, 0, 0); // MOUSEEVENTF_LEFTUP = 0x04
+        SendMouseUp();
         Thread.Sleep(100);
 
         SetCursorPos(origPos.x, origPos.y);
@@ -367,7 +456,7 @@ class CS2Assistant
 
                     if (debug)
                     {
-                        Log(string.Format("[DEBUG] Go region HSV range: Min=[{0},{1},{2}] Max=[{3},{4},{5}]", (int)(minH / 2), minS, minV, (int)(maxH / 2), maxS, maxV));
+                        Log(string.Format("[DEBUG] Go region HSV range: Min=[{0},{1},{2}] Max=[{3},{4},{5}]", minH, minS, minV, maxH, maxS, maxV));
                         Log(string.Format("[DEBUG] Matching green pixels: {0} (Threshold: 400)", greenCount * 16));
                     }
                 }
@@ -451,6 +540,9 @@ class CS2Assistant
     // Returns true if the top-right queue indicator is green (currently searching for a match)
     static bool IsQueuing(bool debug = false)
     {
+        if (!IsCS2Active())
+            return false;
+
         Color pixel = GetPixelColor(QUEUE_INDICATOR_COORDS[0], QUEUE_INDICATOR_COORDS[1]);
         double h, s, v;
         ColorToHSV(pixel.R, pixel.G, pixel.B, out h, out s, out v);
@@ -516,9 +608,9 @@ class CS2Assistant
 
                         SetCursorPos(clickX, clickY);
                         Thread.Sleep(50);
-                        mouse_event(0x02, 0, 0, 0, 0); // MOUSEEVENTF_LEFTDOWN = 0x02
+                        SendMouseDown();
                         Thread.Sleep(50);
-                        mouse_event(0x04, 0, 0, 0, 0); // MOUSEEVENTF_LEFTUP = 0x04
+                        SendMouseUp();
                         Thread.Sleep(50);
                         SetCursorPos(origPos.x, origPos.y);
 
@@ -560,9 +652,9 @@ class CS2Assistant
                         byte key = AFK_KEYS[rand.Next(4)]; // LockArray index check
 
                         // Press key
-                        keybd_event(key, 0, 0, 0); // Key down
+                        SendKeyDown(key);
                         Thread.Sleep(rand.Next(100, 300));
-                        keybd_event(key, 0, 2, 0); // Key up (KEYEVENTF_KEYUP = 2)
+                        SendKeyUp(key);
 
                         // Press opposing key to restore position
                         byte opposing = 0;
@@ -574,9 +666,9 @@ class CS2Assistant
                         if (opposing != 0)
                         {
                             Thread.Sleep(rand.Next(100, 200));
-                            keybd_event(opposing, 0, 0, 0);
+                            SendKeyDown(opposing);
                             Thread.Sleep(rand.Next(100, 300));
-                            keybd_event(opposing, 0, 2, 0);
+                            SendKeyUp(opposing);
                         }
                     }
                     catch (Exception e)
@@ -741,10 +833,6 @@ class CS2Assistant
                                 }
                             }
                         }
-                        else
-                        {
-                            lastNavigationTime = currentTime;
-                        }
                     }
                 }
                 catch (Exception e)
@@ -788,6 +876,10 @@ class CS2Assistant
         {
             Beep(1000, 200);
         }
+        else
+        {
+            BeepSequence(new int[] { 700, 400 }, 150);
+        }
     }
 
     static public void StopAssistant()
@@ -820,6 +912,81 @@ class CS2Assistant
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    // Resolves CS2's actual "cfg" folder by reading Steam's real install path from
+    // the registry, then checking every Steam library folder the user has added
+    // (not just the default one) for a Counter-Strike 2 install. Returns null if
+    // it can't be found, rather than silently writing to a guessed, likely-wrong path.
+    static string FindCS2ConfigDir()
+    {
+        List<string> libraryPaths = new List<string>();
+
+        try
+        {
+            string steamPath = null;
+
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam"))
+            {
+                if (key != null)
+                    steamPath = key.GetValue("SteamPath") as string;
+            }
+
+            if (string.IsNullOrEmpty(steamPath))
+            {
+                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Valve\Steam"))
+                {
+                    if (key != null)
+                        steamPath = key.GetValue("InstallPath") as string;
+                }
+            }
+
+            if (string.IsNullOrEmpty(steamPath))
+                return null;
+
+            steamPath = steamPath.Replace('/', '\\').TrimEnd('\\');
+            libraryPaths.Add(steamPath);
+
+            // The default Steam install is only one possible library - CS2 is a large
+            // install and is frequently placed in an additional library folder on
+            // another drive, so parse libraryfolders.vdf for all of them.
+            string vdfPath = System.IO.Path.Combine(steamPath, "steamapps", "libraryfolders.vdf");
+            if (System.IO.File.Exists(vdfPath))
+            {
+                string vdfText = System.IO.File.ReadAllText(vdfPath);
+                MatchCollection matches = Regex.Matches(vdfText, "\"path\"\\s*\"([^\"]+)\"");
+                foreach (Match m in matches)
+                {
+                    string libPath = m.Groups[1].Value.Replace("\\\\", "\\");
+
+                    bool alreadyAdded = false;
+                    foreach (string existing in libraryPaths)
+                    {
+                        if (string.Equals(existing, libPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            alreadyAdded = true;
+                            break;
+                        }
+                    }
+                    if (!alreadyAdded)
+                        libraryPaths.Add(libPath);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log(string.Format("Steam path lookup error: {0}", ex.Message));
+            return null;
+        }
+
+        foreach (string lib in libraryPaths)
+        {
+            string candidate = System.IO.Path.Combine(lib, "steamapps", "common", "Counter-Strike 2", "game", "csgo", "cfg");
+            if (System.IO.Directory.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
     [STAThread]
     static void Main()
     {
@@ -834,6 +1001,10 @@ class CS2Assistant
 
         Application.EnableVisualStyles();
 
+        // Create the GUI first so Log() calls below actually reach the log box
+        // instead of being silently dropped because 'form' is still null.
+        form = new AssistantForm();
+
         // Start background threads
         new Thread(AutoAcceptLoop) { IsBackground = true }.Start();
         new Thread(AntiAfkLoop) { IsBackground = true }.Start();
@@ -845,14 +1016,21 @@ class CS2Assistant
         try
         {
             string sourcePath = System.AppDomain.CurrentDomain.BaseDirectory + "gamestate_integration_cs2assistant.cfg";
-            string cs2ConfigDir = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData) + @"\Steam\steamapps\common\Counter-Strike 2\game\csgo\cfg\";
-            string targetConfig = cs2ConfigDir + "gamestate_integration_cs2assistant.cfg";
+            string cs2ConfigDir = FindCS2ConfigDir();
 
-            if (!System.IO.File.Exists(targetConfig) && System.IO.File.Exists(sourcePath))
+            if (cs2ConfigDir == null)
             {
-                System.IO.Directory.CreateDirectory(cs2ConfigDir);
-                System.IO.File.Copy(sourcePath, targetConfig);
-                Log("Auto-installed GSI config to CS2 cfg folder.");
+                Log("Could not locate a CS2 install via Steam's registry/library folders. " +
+                    "Copy gamestate_integration_cs2assistant.cfg into CS2's game\\csgo\\cfg folder manually.");
+            }
+            else
+            {
+                string targetConfig = System.IO.Path.Combine(cs2ConfigDir, "gamestate_integration_cs2assistant.cfg");
+                if (!System.IO.File.Exists(targetConfig) && System.IO.File.Exists(sourcePath))
+                {
+                    System.IO.File.Copy(sourcePath, targetConfig);
+                    Log("Auto-installed GSI config to: " + targetConfig);
+                }
             }
         }
         catch (Exception copyEx)
@@ -860,8 +1038,6 @@ class CS2Assistant
             Log(string.Format("Failed to auto-install GSI config: {0}", copyEx.Message));
         }
 
-        // Launch GUI
-        form = new AssistantForm();
         Application.Run(form);
     }
 }
@@ -879,11 +1055,34 @@ class AssistantForm : Form
     private DateTime startTime;
     private Label lblGsiStatus;
 
+    // Global hotkey plumbing. These are real system-wide hotkeys (via RegisterHotKey +
+    // the WM_HOTKEY message) so F9/F10/F11 work while CS2 has focus, not just this window.
+    private const int HOTKEY_CALIBRATE = 1;
+    private const int HOTKEY_TOGGLE = 2;
+    private const int HOTKEY_EXIT = 3;
+    private const int WM_HOTKEY = 0x0312;
+    private const uint VK_F9 = 0x78;
+    private const uint VK_F10 = 0x79;
+    private const uint VK_F11 = 0x7A;
+
+    [DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
     public AssistantForm()
     {
         startTime = DateTime.Now;
         InitializeComponents();
         UpdateState();
+
+        if (!RegisterHotKey(this.Handle, HOTKEY_CALIBRATE, 0, VK_F9))
+            AppendLog(string.Format("[{0:HH:mm:ss}] Failed to register global hotkey F9 (Calibrate) - it may be in use by another app.", DateTime.Now));
+        if (!RegisterHotKey(this.Handle, HOTKEY_TOGGLE, 0, VK_F10))
+            AppendLog(string.Format("[{0:HH:mm:ss}] Failed to register global hotkey F10 (Toggle) - it may be in use by another app.", DateTime.Now));
+        if (!RegisterHotKey(this.Handle, HOTKEY_EXIT, 0, VK_F11))
+            AppendLog(string.Format("[{0:HH:mm:ss}] Failed to register global hotkey F11 (Exit) - it may be in use by another app.", DateTime.Now));
 
         timer = new System.Windows.Forms.Timer();
         timer.Interval = 1000;
@@ -891,21 +1090,40 @@ class AssistantForm : Form
         timer.Start();
     }
 
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_HOTKEY)
+        {
+            int id = m.WParam.ToInt32();
+            if (id == HOTKEY_CALIBRATE)
+                CS2Assistant.PrintCalibrationCoords();
+            else if (id == HOTKEY_TOGGLE)
+                CS2Assistant.ToggleAssistant();
+            else if (id == HOTKEY_EXIT)
+                CS2Assistant.StopAssistant();
+        }
+        base.WndProc(ref m);
+    }
+
+    private void AssistantForm_FormClosing(object sender, FormClosingEventArgs e)
+    {
+        // Unregister global hotkeys when closing
+        UnregisterHotKey(this.Handle, HOTKEY_CALIBRATE);
+        UnregisterHotKey(this.Handle, HOTKEY_TOGGLE);
+        UnregisterHotKey(this.Handle, HOTKEY_EXIT);
+    }
+
     private void InitializeComponents()
     {
-        this.Text = "CS2 Match Assistant v1.0";
+        this.Text = "CS2 Match Assistant v1.1";
         this.Size = new System.Drawing.Size(360, 460);
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.MaximizeBox = false;
         this.StartPosition = FormStartPosition.CenterScreen;
         this.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
         this.ForeColor = System.Drawing.Color.White;
-        this.KeyPreview = true;
-        this.KeyDown += OnKeyDown;
 
-        // Register global hotkeys
-        RegisterHotKey(this.Handle, HOTKEY_TOGGLE, MOD_NONE, (uint)Keys.F10);
-        RegisterHotKey(this.Handle, HOTKEY_EXIT, MOD_NONE, (uint)Keys.F11);
+        this.FormClosing += AssistantForm_FormClosing;
 
         // Status label
         statusLabel = new Label();
@@ -1052,25 +1270,6 @@ class AssistantForm : Form
         {
             lblGsiStatus.Text = "GSI: Disconnected";
             lblGsiStatus.ForeColor = System.Drawing.Color.Gray;
-        }
-    }
-
-    private void OnKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.KeyCode == Keys.F9)
-        {
-            CS2Assistant.PrintCalibrationCoords();
-            e.Handled = true;
-        }
-        else if (e.KeyCode == Keys.F10)
-        {
-            CS2Assistant.ToggleAssistant();
-            e.Handled = true;
-        }
-        else if (e.KeyCode == Keys.F11)
-        {
-            CS2Assistant.StopAssistant();
-            e.Handled = true;
         }
     }
 
