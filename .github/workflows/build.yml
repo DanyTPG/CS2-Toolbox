@@ -1,0 +1,49 @@
+name: Build CS2Assistant
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Compile CS2Assistant
+      shell: cmd
+      run: |
+        set CSC_PATH=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe
+        "%CSC_PATH%" /unsafe /target:winexe /out:CS2Assistant.exe /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll CS2Assistant.cs
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: CS2Assistant
+        path: CS2Assistant.exe
+        retention-days: 1
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Compile CS2Assistant
+      shell: cmd
+      run: |
+        set CSC_PATH=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe
+        "%CSC_PATH%" /unsafe /target:winexe /out:CS2Assistant.exe /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll CS2Assistant.cs
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}
+        name: Build ${{ github.run_number }}
+        generate_release_notes: true
+        files: CS2Assistant.exe
