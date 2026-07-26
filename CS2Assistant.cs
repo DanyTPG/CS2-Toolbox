@@ -131,19 +131,21 @@ class CS2Assistant
             if (data.ContainsKey("map"))
             {
                 Dictionary<string, object> map = data["map"] as Dictionary<string, object>;
-                if (map != null && map.ContainsKey("phase"))
-                {
-                    gsMapPhase = map["phase"].ToString();
-                }
+                gsMapPhase = (map != null && map.ContainsKey("phase")) ? map["phase"].ToString() : "blank";
+            }
+            else
+            {
+                gsMapPhase = "blank";
             }
 
             if (data.ContainsKey("round"))
             {
                 Dictionary<string, object> round = data["round"] as Dictionary<string, object>;
-                if (round != null && round.ContainsKey("phase"))
-                {
-                    gsRoundPhase = round["phase"].ToString();
-                }
+                gsRoundPhase = (round != null && round.ContainsKey("phase")) ? round["phase"].ToString() : "end";
+            }
+            else
+            {
+                gsRoundPhase = "end";
             }
 
             gsiLastUpdate = DateTime.UtcNow;
