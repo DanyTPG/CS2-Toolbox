@@ -13,7 +13,7 @@ compile.bat
 ```
 
 Compiles `CS2Assistant.cs` → `CS2Assistant.exe` using:
-`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /unsafe /target:exe /r:System.Drawing.dll /r:System.Windows.Forms.dll`
+`C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /unsafe /target:exe /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll`
 
 If the exe is locked (still running):
 ```cmd
@@ -54,17 +54,29 @@ Everything lives in one file: `CS2Assistant.cs` (two classes).
 | `AutoAcceptLoop` | Center-screen green Accept button via region pixel scan |
 | `AutoQueueLoop` | Lobby state machine: navigate menus, click Go, track queue |
 | `AntiAfkLoop` | In-match only: random WASD + opposing key |
+| `GsiListenerLoop` | HTTP listener for CS2 Game State Integration data |
+| `GsiHeartbeatCheckLoop` | Watchdog: disconnects GSI after 60s silence |
 
 Shared state: `running`, `active` (toggled by F10/GUI button). Feature flags and timing at top of file as static fields. Console window is hidden; all logging goes to the GUI log box via `BeginInvoke`.
 
 ### State detection (no game memory)
 
-- **In-match vs menu**: `GetCursorInfo` — cursor hidden = in-match; visible = lobby/menu. Anti-AFK only when hidden; auto-queue only when visible ≥10s continuous (avoids ESC-menu false positives).
-- **GUI**: `AssistantForm` with checkboxes for each feature, Start/Stop button, Calibrate button, scrolling log, uptime timer. F9/F10/F11 handled via `KeyPreview` on the form.
+- **In-match vs menu**: `map.phase` via GSI (authoritative: "live", "warmup", "intermission" = in-match). Falls back to `GetCursorInfo` when GSI disconnected.
+- **GUI**: `AssistantForm` with checkboxes for each feature, Start/Stop button, Calibrate button, scrolling log, uptime timer, GSI status indicator. F9/F10/F11 handled via `KeyPreview` on the form.
 - **CS2 focused**: `GetForegroundWindow` + title contains `"Counter-Strike 2"`.
-- **Accept ready**: GDI+ `CopyFromScreen` on center 30% box; HSV green blob (Hue 80–170).
-- **Go button ready**: single pixel at `GO_COORDS` — bright green (Hue ~101).
-- **Currently queuing**: single pixel at `QUEUE_INDICATOR_COORDS` (top-right) — dark green while searching.
+- **Accept ready**: GDI+ `CopyFromScreen` on center 30% box; HSV green blob (Hue 80–170). Always pixel-based (GSI gap).
+- **Go button ready**: single pixel at `GO_COORDS` — bright green (Hue ~101). Always pixel-based (GSI gap).
+- **Currently queuing**: single pixel at `QUEUE_INDICATOR_COORDS` (top-right) — dark green while searching. Always pixel-based (GSI gap).
+
+### Game State Integration (GSI)
+
+Optional enhancement. When configured, CS2 pushes JSON state via HTTP POST to `localhost:41234`. Replaces cursor-based in-match detection with authoritative game state. Falls back to pixel detection when GSI not configured.
+
+**GSI fields used**: `map.phase`, `round.phase`
+
+**Setup**: Copy `gamestate_integration_cs2assistant.cfg` to `<CS2 install>/game/csgo/cfg/`. Restart CS2.
+
+**State fields**: `gsMapPhase`, `gsRoundPhase`, `gsiConnected` — written by GSI thread, read by all loops.
 
 ### Auto-queue state machine
 

@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 class CS2Assistant
@@ -26,6 +29,10 @@ class CS2Assistant
     static int AFK_MIN_INTERVAL = 30; // seconds
     static int AFK_MAX_INTERVAL = 90; // seconds
     static byte[] AFK_KEYS = { 0x57, 0x53, 0x41, 0x44 }; // W, S, A, D
+
+    // GSI Configuration
+    static int GSI_PORT = 41234;
+    static double GSI_HEARTBEAT_TIMEOUT = 60.0; // seconds
 
     // Win32 API Constants & Structures
     [StructLayout(LayoutKind.Sequential)]
@@ -75,6 +82,12 @@ class CS2Assistant
     static int screenHeight = 1080;
     static AssistantForm form;
 
+    // Game State Integration (GSI) fields
+    static public string gsMapPhase = "blank";
+    static public string gsRoundPhase = "end";
+    static public bool gsiConnected = false;
+    static DateTime gsiLastUpdate = DateTime.MinValue;
+
     static void Log(string message)
     {
         string formatted = string.Format("[{0:HH:mm:ss}] {1}", DateTime.Now, message);
@@ -106,6 +119,139 @@ class CS2Assistant
             return sb.ToString().Contains("Counter-Strike 2");
         }
         return false;
+    }
+
+    static void ProcessGsiData(string json)
+    {
+        try
+        {
+            JavaScriptSerializer serializer = new JavaScriptSerializer();
+            Dictionary<string, object> data = serializer.Deserialize<Dictionary<string, object>>(json);
+
+            if (data.ContainsKey("map"))
+            {
+                Dictionary<string, object> map = data["map"] as Dictionary<string, object>;
+                if (map != null && map.ContainsKey("phase"))
+                {
+                    gsMapPhase = map["phase"].ToString();
+                }
+            }
+
+            if (data.ContainsKey("round"))
+            {
+                Dictionary<string, object> round = data["round"] as Dictionary<string, object>;
+                if (round != null && round.ContainsKey("phase"))
+                {
+                    gsRoundPhase = round["phase"].ToString();
+                }
+            }
+
+            gsiLastUpdate = DateTime.UtcNow;
+            gsiConnected = true;
+        }
+        catch (Exception ex)
+        {
+            Log(string.Format("GSI parse error: {0}", ex.Message));
+        }
+    }
+
+    static void GsiListenerLoop()
+    {
+        HttpListener listener = new HttpListener();
+        try
+        {
+            listener.Prefixes.Add(string.Format("http://+:{0}/", GSI_PORT));
+            listener.Start();
+            Log(string.Format("GSI listener started on port {0}", GSI_PORT));
+        }
+        catch (Exception ex)
+        {
+            Log(string.Format("GSI listener failed to start: {0}. Running without GSI.", ex.Message));
+            gsiConnected = false;
+            return;
+        }
+
+        bool loggedWaiting = false;
+
+        while (running)
+        {
+            try
+            {
+                IAsyncResult result = listener.BeginGetContext(null, null);
+
+                int waited = 0;
+                while (!result.IsCompleted && running)
+                {
+                    Thread.Sleep(500);
+                    waited += 500;
+                    if (waited > 15000 && !loggedWaiting)
+                    {
+                        loggedWaiting = true;
+                        Log("No GSI data. Place gamestate_integration_cs2assistant.cfg in CS2 cfg folder.");
+                    }
+                }
+
+                if (!result.IsCompleted || !running)
+                    break;
+
+                HttpListenerContext context = listener.EndGetContext(result);
+                HttpListenerRequest request = context.Request;
+
+                if (request.HttpMethod == "POST")
+                {
+                    System.IO.Stream body = request.InputStream;
+                    System.IO.StreamReader reader = new System.IO.StreamReader(body, System.Text.Encoding.UTF8);
+                    string json = reader.ReadToEnd();
+                    reader.Close();
+                    body.Close();
+
+                    ProcessGsiData(json);
+
+                    if (!loggedWaiting)
+                    {
+                        Log("GSI connected. Map phase: " + gsMapPhase);
+                        loggedWaiting = true;
+                    }
+                }
+
+                HttpListenerResponse response = context.Response;
+                response.StatusCode = 200;
+                response.Close();
+            }
+            catch (HttpListenerException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log(string.Format("GSI listener error: {0}", ex.Message));
+            }
+        }
+
+        try { listener.Stop(); listener.Close(); }
+        catch { }
+
+        Log("GSI listener stopped.");
+    }
+
+    static void GsiHeartbeatCheckLoop()
+    {
+        while (running)
+        {
+            Thread.Sleep(10000);
+
+            if (gsiConnected)
+            {
+                double elapsed = (DateTime.UtcNow - gsiLastUpdate).TotalSeconds;
+                if (elapsed > GSI_HEARTBEAT_TIMEOUT)
+                {
+                    Log("GSI heartbeat timeout. Falling back to pixel detection.");
+                    gsiConnected = false;
+                    gsMapPhase = "blank";
+                    gsRoundPhase = "end";
+                }
+            }
+        }
     }
 
     static void ClickRelative(double relX, double relY)
@@ -362,7 +508,16 @@ class CS2Assistant
         {
             if (active && ANTI_AFK_ENABLED)
             {
-                if (IsCS2Active() && !GetCursorState())
+                bool inMatch;
+                if (gsiConnected)
+                {
+                    inMatch = (gsMapPhase == "live" || gsMapPhase == "warmup");
+                }
+                else
+                {
+                    inMatch = IsCS2Active() && !GetCursorState();
+                }
+                if (inMatch)
                 {
                     Log("Simulating anti-AFK movement...");
                     try
@@ -434,11 +589,20 @@ class CS2Assistant
                             Log("Cursor hidden or CS2 inactive. Resetting lobby duration.");
                         }
                         cursorVisibleDuration = 0;
-                        if (!cursorVisible && queueState != "LOBBY")
+                        bool gsiInMatch = gsiConnected && (gsMapPhase == "live" || gsMapPhase == "warmup" || gsMapPhase == "intermission");
+                        if ((gsiInMatch || !cursorVisible) && queueState != "LOBBY")
                         {
-                            Log("In-game detected (cursor hidden). Resetting queue state to LOBBY.");
+                            string reason = gsiConnected ? "GSI map.phase=" + gsMapPhase : "cursor hidden";
+                            Log(string.Format("In-game detected ({0}). Resetting queue state to LOBBY.", reason));
                             queueState = "LOBBY";
                         }
+                    }
+
+                    // GSI fast-path: skip cursor wait when we know we're in menus
+                    bool confirmedLobby = gsiConnected && (gsMapPhase == "blank" || gsMapPhase == "game_over");
+                    if (confirmedLobby && cursorVisibleDuration < 10)
+                    {
+                        cursorVisibleDuration = 10;
                     }
 
                     if (cursorVisibleDuration >= 10)
@@ -495,7 +659,14 @@ class CS2Assistant
                         }
                         else if (queueState == "QUEUING")
                         {
-                            if (currentTime - lastQueuedTime > QUEUE_DELAY_AFTER_MATCH)
+                            // GSI fast-detect: match started
+                            if (gsiConnected && (gsMapPhase == "live" || gsMapPhase == "warmup"))
+                            {
+                                Log("GSI confirms match started. Resetting to LOBBY.");
+                                queueState = "LOBBY";
+                                cursorVisibleDuration = 0;
+                            }
+                            else if (currentTime - lastQueuedTime > QUEUE_DELAY_AFTER_MATCH)
                             {
                                 if (currentTime - lastScanTime >= QUEUE_CHECK_INTERVAL)
                                 {
@@ -597,9 +768,17 @@ class CS2Assistant
     [DllImport("kernel32.dll")]
     public static extern IntPtr GetConsoleWindow();
 
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
     [STAThread]
     static void Main()
     {
+        // Hide console window immediately to prevent flash
+        IntPtr consoleWnd = GetConsoleWindow();
+        if (consoleWnd != IntPtr.Zero)
+            ShowWindow(consoleWnd, 0);
+
         // 0 = SM_CXSCREEN, 1 = SM_CYSCREEN
         screenWidth = GetSystemMetrics(0);
         screenHeight = GetSystemMetrics(1);
@@ -610,6 +789,8 @@ class CS2Assistant
         new Thread(AutoAcceptLoop) { IsBackground = true }.Start();
         new Thread(AntiAfkLoop) { IsBackground = true }.Start();
         new Thread(AutoQueueLoop) { IsBackground = true }.Start();
+        new Thread(GsiListenerLoop) { IsBackground = true }.Start();
+        new Thread(GsiHeartbeatCheckLoop) { IsBackground = true }.Start();
 
         // Launch GUI
         form = new AssistantForm();
@@ -630,16 +811,12 @@ class AssistantForm : Form
     private System.Windows.Forms.Timer timer;
     private DateTime startTime;
     private System.IntPtr consoleHandle;
-
-    [DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    private Label lblGsiStatus;
 
     public AssistantForm()
     {
-        // Hide console window
+        // Console already hidden in Main; keep handle for restore on exit
         consoleHandle = CS2Assistant.GetConsoleWindow();
-        if (consoleHandle != System.IntPtr.Zero)
-            ShowWindow(consoleHandle, 0);
 
         startTime = DateTime.Now;
         InitializeComponents();
@@ -654,7 +831,7 @@ class AssistantForm : Form
     private void InitializeComponents()
     {
         this.Text = "CS2 Match Assistant v1.0";
-        this.Size = new System.Drawing.Size(360, 440);
+        this.Size = new System.Drawing.Size(360, 460);
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.MaximizeBox = false;
         this.StartPosition = FormStartPosition.CenterScreen;
@@ -754,7 +931,7 @@ class AssistantForm : Form
         lblUptime.Text = "Uptime: 00:00:00";
         lblUptime.Font = new System.Drawing.Font("Segoe UI", 9);
         lblUptime.ForeColor = System.Drawing.Color.Gray;
-        lblUptime.Location = new System.Drawing.Point(12, 370);
+        lblUptime.Location = new System.Drawing.Point(12, 390);
         lblUptime.AutoSize = true;
         this.Controls.Add(lblUptime);
 
@@ -763,9 +940,18 @@ class AssistantForm : Form
         lblHotkeys.Text = "Hotkeys: F9=Calibrate  F10=Toggle  F11=Exit";
         lblHotkeys.Font = new System.Drawing.Font("Segoe UI", 8);
         lblHotkeys.ForeColor = System.Drawing.Color.Gray;
-        lblHotkeys.Location = new System.Drawing.Point(12, 390);
+        lblHotkeys.Location = new System.Drawing.Point(12, 410);
         lblHotkeys.AutoSize = true;
         this.Controls.Add(lblHotkeys);
+
+        // GSI status
+        lblGsiStatus = new Label();
+        lblGsiStatus.Text = "GSI: Disconnected";
+        lblGsiStatus.Font = new System.Drawing.Font("Segoe UI", 8);
+        lblGsiStatus.ForeColor = System.Drawing.Color.Gray;
+        lblGsiStatus.Location = new System.Drawing.Point(12, 370);
+        lblGsiStatus.AutoSize = true;
+        this.Controls.Add(lblGsiStatus);
     }
 
     public void AppendLog(string message)
@@ -800,6 +986,17 @@ class AssistantForm : Form
         TimeSpan elapsed = DateTime.Now - startTime;
         lblUptime.Text = string.Format("Uptime: {0:00}:{1:00}:{2:00}",
             (int)elapsed.TotalHours, elapsed.Minutes, elapsed.Seconds);
+
+        if (CS2Assistant.gsiConnected)
+        {
+            lblGsiStatus.Text = "GSI: Connected (" + CS2Assistant.gsMapPhase + ")";
+            lblGsiStatus.ForeColor = System.Drawing.Color.LimeGreen;
+        }
+        else
+        {
+            lblGsiStatus.Text = "GSI: Disconnected";
+            lblGsiStatus.ForeColor = System.Drawing.Color.Gray;
+        }
     }
 
     private void OnKeyDown(object sender, KeyEventArgs e)
@@ -852,7 +1049,7 @@ class AssistantForm : Form
         CS2Assistant.active = false;
         timer.Stop();
         if (consoleHandle != System.IntPtr.Zero)
-            ShowWindow(consoleHandle, 1);
+            CS2Assistant.ShowWindow(consoleHandle, 1);
         base.OnFormClosing(e);
     }
 }
