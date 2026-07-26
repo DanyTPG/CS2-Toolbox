@@ -1004,7 +1004,12 @@ class AssistantForm : Form
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.KeyCode == Keys.F10)
+        if (e.KeyCode == Keys.F9)
+        {
+            CS2Assistant.PrintCalibrationCoords();
+            e.Handled = true;
+        }
+        else if (e.KeyCode == Keys.F10)
         {
             CS2Assistant.ToggleAssistant();
             e.Handled = true;
