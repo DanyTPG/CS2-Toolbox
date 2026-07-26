@@ -30,7 +30,6 @@ Produces `CS2Assistant.exe` (~25 KB).
 1. Run `CS2Assistant.exe` as Admin
 2. Toggle features in the GUI or via hotkeys:
    - **F10** — Start/stop the assistant
-   - **F9** — Print cursor position + color (for calibration)
    - **F11** — Quit
 3. Start CS2 — the assistant runs in the background
 
