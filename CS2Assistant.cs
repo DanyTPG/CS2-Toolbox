@@ -532,6 +532,16 @@ class CS2Assistant
         return color;
     }
 
+    // Returns true if the pixel at relative coords is the blue "selected" color.
+    // Selected tabs in CS2 are ~RGB(131,216,255) HSV(199,0.49,1.0).
+    static bool IsTabSelected(double relX, double relY)
+    {
+        Color pixel = GetPixelColor(relX, relY);
+        double h, s, v;
+        ColorToHSV(pixel.R, pixel.G, pixel.B, out h, out s, out v);
+        return (h > 180 && h < 220 && s > 0.3 && v > 0.8);
+    }
+
     // Returns true if the green Go / Find Match button is visible and clickable
     static bool ScanForQueueButton(bool debug = false)
     {
@@ -791,19 +801,59 @@ class CS2Assistant
                                     cursorVisibleDuration = 0;
                                 }
                                 // Neither found: navigate Play -> Matchmaking -> Premier
+                                // Skip already-selected tabs to save time.
                                 else if (currentTime - lastNavigationTime > 15)
                                 {
-                                    Log("Lobby state active. Navigating to Play menu...");
-                                    ClickRelative(PLAY_COORDS[0], PLAY_COORDS[1]);
-                                    Thread.Sleep(1200);
+                                    // Check current state before clicking anything
+                                    bool playSelected = IsTabSelected(PLAY_COORDS[0], PLAY_COORDS[1]);
+                                    bool mmSelected = IsTabSelected(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
+                                    bool premSelected = IsTabSelected(PREMIER_COORDS[0], PREMIER_COORDS[1]);
 
-                                    Log("Selecting Matchmaking...");
-                                    ClickRelative(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
-                                    Thread.Sleep(800);
+                                    if (premSelected)
+                                    {
+                                        Log("Premier already selected. Skipping navigation.");
+                                    }
+                                    else if (mmSelected)
+                                    {
+                                        Log("Matchmaking selected. Selecting Premier Mode...");
+                                        ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
+                                        Thread.Sleep(1200);
+                                    }
+                                    else if (playSelected)
+                                    {
+                                        // Play is open but we need to drill into Matchmaking -> Premier
+                                        Log("Play selected. Selecting Matchmaking...");
+                                        ClickRelative(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
+                                        Thread.Sleep(800);
 
-                                    Log("Selecting Premier Mode...");
-                                    ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
-                                    Thread.Sleep(1200);
+                                        Log("Selecting Premier Mode...");
+                                        ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
+                                        Thread.Sleep(1200);
+                                    }
+                                    else
+                                    {
+                                        // Nothing selected — full navigation
+                                        Log("Lobby state active. Navigating to Play menu...");
+                                        ClickRelative(PLAY_COORDS[0], PLAY_COORDS[1]);
+                                        Thread.Sleep(1200);
+
+                                        // Re-check after clicking Play
+                                        mmSelected = IsTabSelected(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
+                                        premSelected = IsTabSelected(PREMIER_COORDS[0], PREMIER_COORDS[1]);
+
+                                        if (!premSelected)
+                                        {
+                                            if (!mmSelected)
+                                            {
+                                                Log("Selecting Matchmaking...");
+                                                ClickRelative(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
+                                                Thread.Sleep(800);
+                                            }
+                                            Log("Selecting Premier Mode...");
+                                            ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
+                                            Thread.Sleep(1200);
+                                        }
+                                    }
 
                                     lastNavigationTime = currentTime;
 
