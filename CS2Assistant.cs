@@ -806,6 +806,18 @@ class CS2Assistant
                                     Thread.Sleep(1200);
 
                                     lastNavigationTime = currentTime;
+
+                                    // Check for Go immediately after navigating
+                                    if (ScanForQueueButton(true))
+                                    {
+                                        Log("Go / Find Match button found! Starting queue...");
+                                        ClickRelative(GO_COORDS[0], GO_COORDS[1]);
+
+                                        Log("Queued successfully. Entering QUEUING state.");
+                                        queueState = "QUEUING";
+                                        lastQueuedTime = currentTime;
+                                        cursorVisibleDuration = 0;
+                                    }
                                 }
                                 else
                                 {
