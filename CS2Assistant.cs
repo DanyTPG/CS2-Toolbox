@@ -370,8 +370,23 @@ class CS2Assistant
         }
     }
 
-    static void ClickRelative(double relX, double relY)
+    static bool SleepIfActive(int milliseconds)
     {
+        int step = 50;
+        for (int elapsed = 0; elapsed < milliseconds; elapsed += step)
+        {
+            if (!running || !active || !IsCS2Active())
+                return false;
+            Thread.Sleep(Math.Min(step, milliseconds - elapsed));
+        }
+        return active && IsCS2Active();
+    }
+
+    static bool ClickRelative(double relX, double relY)
+    {
+        if (!active || !IsCS2Active())
+            return false;
+
         int absX = (int)(relX * screenWidth);
         int absY = (int)(relY * screenHeight);
 
@@ -379,14 +394,21 @@ class CS2Assistant
         GetCursorPos(out origPos);
 
         SetCursorPos(absX, absY);
-        Thread.Sleep(100);
+        if (!SleepIfActive(100)) return false;
+
         SendMouseDown();
-        Thread.Sleep(50);
+        if (!SleepIfActive(50))
+        {
+            SendMouseUp();
+            return false;
+        }
         SendMouseUp();
-        Thread.Sleep(100);
+
+        if (!SleepIfActive(100)) return false;
 
         SetCursorPos(origPos.x, origPos.y);
         Log(string.Format("Clicked at ({0}, {1})", absX, absY));
+        return true;
     }
 
     private static void ColorToHSV(byte r, byte g, byte b, out double hue, out double saturation, out double value)
@@ -418,6 +440,9 @@ class CS2Assistant
 
     static int CountGreenPixels(int left, int top, int width, int height, bool debug = false)
     {
+        if (!IsCS2Active())
+            return 0;
+
         int greenCount = 0;
         try
         {
@@ -536,6 +561,9 @@ class CS2Assistant
     // Selected tabs in CS2 are ~RGB(131,216,255) HSV(199,0.49,1.0).
     static bool IsTabSelected(double relX, double relY)
     {
+        if (!IsCS2Active())
+            return false;
+
         Color pixel = GetPixelColor(relX, relY);
         double h, s, v;
         ColorToHSV(pixel.R, pixel.G, pixel.B, out h, out s, out v);
@@ -602,12 +630,12 @@ class CS2Assistant
     {
         while (running)
         {
-            if (active && AUTO_ACCEPT_ENABLED)
+            if (active && AUTO_ACCEPT_ENABLED && IsCS2Active())
             {
                 // GSI gating: only accept when in menu state
                 if (gsiConnected && gsMapPhase != "blank")
                 {
-                    Thread.Sleep((int)(ACCEPT_SCAN_INTERVAL * 1000));
+                    SleepIfActive((int)(ACCEPT_SCAN_INTERVAL * 1000));
                     continue;
                 }
 
@@ -622,6 +650,11 @@ class CS2Assistant
 
                     if (matchedPixels > 500)
                     {
+                        if (!active || !IsCS2Active())
+                        {
+                            SleepIfActive((int)(ACCEPT_SCAN_INTERVAL * 1000));
+                            continue;
+                        }
                         // Accept button visible - click at calibrated coords
                         int clickX = (int)(screenWidth * 0.4984);
                         int clickY = (int)(screenHeight * 0.4167);
@@ -632,15 +665,23 @@ class CS2Assistant
                         GetCursorPos(out origPos);
 
                         SetCursorPos(clickX, clickY);
-                        Thread.Sleep(50);
-                        SendMouseDown();
-                        Thread.Sleep(50);
-                        SendMouseUp();
-                        Thread.Sleep(50);
-                        SetCursorPos(origPos.x, origPos.y);
+                        if (SleepIfActive(50))
+                        {
+                            SendMouseDown();
+                            if (SleepIfActive(50))
+                            {
+                                SendMouseUp();
+                                SleepIfActive(50);
+                                SetCursorPos(origPos.x, origPos.y);
 
-                        Log("Accepted match.");
-                        Thread.Sleep(5000);
+                                Log("Accepted match.");
+                                SleepIfActive(5000);
+                            }
+                            else
+                            {
+                                SendMouseUp();
+                            }
+                        }
                     }
                 }
                 catch (Exception e)
@@ -648,7 +689,7 @@ class CS2Assistant
                     Log(string.Format("Error in Auto-Accept: {0}", e.Message));
                 }
             }
-            Thread.Sleep((int)(ACCEPT_SCAN_INTERVAL * 1000));
+            SleepIfActive((int)(ACCEPT_SCAN_INTERVAL * 1000));
         }
     }
 
@@ -658,12 +699,12 @@ class CS2Assistant
         Random rand = new Random();
         while (running)
         {
-            if (active && ANTI_AFK_ENABLED)
+            if (active && ANTI_AFK_ENABLED && IsCS2Active())
             {
                 bool inMatch;
                 if (gsiConnected)
                 {
-                    inMatch = (gsMapPhase == "live" || gsMapPhase == "warmup");
+                    inMatch = IsCS2Active() && (gsMapPhase == "live" || gsMapPhase == "warmup");
                 }
                 else
                 {
@@ -676,24 +717,40 @@ class CS2Assistant
                     {
                         byte key = AFK_KEYS[rand.Next(4)]; // LockArray index check
 
-                        // Press key
-                        SendKeyDown(key);
-                        Thread.Sleep(rand.Next(100, 300));
-                        SendKeyUp(key);
-
-                        // Press opposing key to restore position
-                        byte opposing = 0;
-                        if (key == 0x57) opposing = 0x53; // W -> S
-                        else if (key == 0x53) opposing = 0x57; // S -> W
-                        else if (key == 0x41) opposing = 0x44; // A -> D
-                        else if (key == 0x44) opposing = 0x41; // D -> A
-
-                        if (opposing != 0)
+                        if (active && IsCS2Active())
                         {
-                            Thread.Sleep(rand.Next(100, 200));
-                            SendKeyDown(opposing);
-                            Thread.Sleep(rand.Next(100, 300));
-                            SendKeyUp(opposing);
+                            SendKeyDown(key);
+                            if (SleepIfActive(rand.Next(100, 300)))
+                            {
+                                SendKeyUp(key);
+
+                                // Press opposing key to restore position
+                                byte opposing = 0;
+                                if (key == 0x57) opposing = 0x53; // W -> S
+                                else if (key == 0x53) opposing = 0x57; // S -> W
+                                else if (key == 0x41) opposing = 0x44; // A -> D
+                                else if (key == 0x44) opposing = 0x41; // D -> A
+
+                                if (opposing != 0 && active && IsCS2Active())
+                                {
+                                    if (SleepIfActive(rand.Next(100, 200)))
+                                    {
+                                        SendKeyDown(opposing);
+                                        if (SleepIfActive(rand.Next(100, 300)))
+                                        {
+                                            SendKeyUp(opposing);
+                                        }
+                                        else
+                                        {
+                                            SendKeyUp(opposing);
+                                        }
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                SendKeyUp(key);
+                            }
                         }
                     }
                     catch (Exception e)
@@ -704,11 +761,7 @@ class CS2Assistant
             }
 
             int sleepMs = rand.Next(AFK_MIN_INTERVAL * 1000, AFK_MAX_INTERVAL * 1000);
-            for (int i = 0; i < sleepMs; i += 1000)
-            {
-                if (!running || !active) break;
-                Thread.Sleep(1000);
-            }
+            SleepIfActive(sleepMs);
         }
     }
 
@@ -761,12 +814,12 @@ class CS2Assistant
                         confirmedLobby = false;
                     }
 
-                    if ((confirmedLobby || isMatchAccepted) && cursorVisibleDuration < 10)
+                    if ((confirmedLobby || isMatchAccepted) && cursorVisibleDuration < 10 && csActive)
                     {
                         cursorVisibleDuration = 10;
                     }
 
-                    if (cursorVisibleDuration >= 10)
+                    if (cursorVisibleDuration >= 10 && active && csActive)
                     {
                         double currentTime = (DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds;
 
@@ -792,22 +845,30 @@ class CS2Assistant
                                 // Go button visible? Click it
                                 else if (ScanForQueueButton(true))
                                 {
-                                    Log("Go / Find Match button found! Starting queue...");
-                                    ClickRelative(GO_COORDS[0], GO_COORDS[1]);
-
-                                    Log("Queued successfully. Entering QUEUING state.");
-                                    queueState = "QUEUING";
-                                    lastQueuedTime = currentTime;
-                                    cursorVisibleDuration = 0;
+                                    if (active && IsCS2Active())
+                                    {
+                                        Log("Go / Find Match button found! Starting queue...");
+                                        if (ClickRelative(GO_COORDS[0], GO_COORDS[1]))
+                                        {
+                                            Log("Queued successfully. Entering QUEUING state.");
+                                            queueState = "QUEUING";
+                                            lastQueuedTime = currentTime;
+                                            cursorVisibleDuration = 0;
+                                        }
+                                    }
                                 }
                                 // Neither found: navigate Play -> Matchmaking -> Premier
                                 // Skip already-selected tabs to save time.
                                 else if (currentTime - lastNavigationTime > 15)
                                 {
+                                    if (!active || !IsCS2Active()) continue;
+
                                     // Check current state before clicking anything
                                     bool playSelected = IsTabSelected(PLAY_COORDS[0], PLAY_COORDS[1]);
                                     bool mmSelected = IsTabSelected(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
                                     bool premSelected = IsTabSelected(PREMIER_COORDS[0], PREMIER_COORDS[1]);
+
+                                    bool navOk = true;
 
                                     if (premSelected)
                                     {
@@ -816,44 +877,65 @@ class CS2Assistant
                                     else if (mmSelected)
                                     {
                                         Log("Matchmaking selected. Selecting Premier Mode...");
-                                        ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
-                                        Thread.Sleep(1200);
+                                        if (ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]))
+                                            navOk = SleepIfActive(1200);
+                                        else
+                                            navOk = false;
                                     }
                                     else if (playSelected)
                                     {
                                         // Play is open but we need to drill into Matchmaking -> Premier
                                         Log("Play selected. Selecting Matchmaking...");
-                                        ClickRelative(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
-                                        Thread.Sleep(800);
-
-                                        Log("Selecting Premier Mode...");
-                                        ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
-                                        Thread.Sleep(1200);
+                                        if (ClickRelative(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]))
+                                        {
+                                            if (SleepIfActive(800))
+                                            {
+                                                Log("Selecting Premier Mode...");
+                                                if (ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]))
+                                                    navOk = SleepIfActive(1200);
+                                                else
+                                                    navOk = false;
+                                            }
+                                            else navOk = false;
+                                        }
+                                        else navOk = false;
                                     }
                                     else
                                     {
                                         // Nothing selected — full navigation
                                         Log("Lobby state active. Navigating to Play menu...");
-                                        ClickRelative(PLAY_COORDS[0], PLAY_COORDS[1]);
-                                        Thread.Sleep(1200);
-
-                                        // Re-check after clicking Play
-                                        mmSelected = IsTabSelected(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
-                                        premSelected = IsTabSelected(PREMIER_COORDS[0], PREMIER_COORDS[1]);
-
-                                        if (!premSelected)
+                                        if (ClickRelative(PLAY_COORDS[0], PLAY_COORDS[1]))
                                         {
-                                            if (!mmSelected)
+                                            if (SleepIfActive(1200))
                                             {
-                                                Log("Selecting Matchmaking...");
-                                                ClickRelative(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
-                                                Thread.Sleep(800);
+                                                // Re-check after clicking Play
+                                                mmSelected = IsTabSelected(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]);
+                                                premSelected = IsTabSelected(PREMIER_COORDS[0], PREMIER_COORDS[1]);
+
+                                                if (!premSelected)
+                                                {
+                                                    if (!mmSelected)
+                                                    {
+                                                        Log("Selecting Matchmaking...");
+                                                        if (ClickRelative(MATCHMAKING_COORDS[0], MATCHMAKING_COORDS[1]))
+                                                            navOk = SleepIfActive(800);
+                                                        else navOk = false;
+                                                    }
+                                                    if (navOk && active && IsCS2Active())
+                                                    {
+                                                        Log("Selecting Premier Mode...");
+                                                        if (ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]))
+                                                            navOk = SleepIfActive(1200);
+                                                        else navOk = false;
+                                                    }
+                                                }
                                             }
-                                            Log("Selecting Premier Mode...");
-                                            ClickRelative(PREMIER_COORDS[0], PREMIER_COORDS[1]);
-                                            Thread.Sleep(1200);
+                                            else navOk = false;
                                         }
+                                        else navOk = false;
                                     }
+
+                                    if (!navOk || !active || !IsCS2Active()) continue;
 
                                     lastNavigationTime = currentTime;
 
@@ -861,12 +943,13 @@ class CS2Assistant
                                     if (ScanForQueueButton(true))
                                     {
                                         Log("Go / Find Match button found! Starting queue...");
-                                        ClickRelative(GO_COORDS[0], GO_COORDS[1]);
-
-                                        Log("Queued successfully. Entering QUEUING state.");
-                                        queueState = "QUEUING";
-                                        lastQueuedTime = currentTime;
-                                        cursorVisibleDuration = 0;
+                                        if (ClickRelative(GO_COORDS[0], GO_COORDS[1]))
+                                        {
+                                            Log("Queued successfully. Entering QUEUING state.");
+                                            queueState = "QUEUING";
+                                            lastQueuedTime = currentTime;
+                                            cursorVisibleDuration = 0;
+                                        }
                                     }
                                 }
                                 else
