@@ -21,12 +21,27 @@ class CS2Assistant
     static double QUEUE_CHECK_INTERVAL = 2.0; // seconds (check for queue button frequency)
     static double QUEUE_DELAY_AFTER_MATCH = 10.0; // seconds
 
-    // Calibrated relative coordinates (0.0 to 1.0) for this screen
-    static double[] PLAY_COORDS = { 0.5255, 0.0343 };           // Play button (top center)
-    static double[] MATCHMAKING_COORDS = { 0.4036, 0.0796 };    // Matchmaking tab
-    static double[] PREMIER_COORDS = { 0.2339, 0.1204 };        // Premier Mode tab
-    static double[] GO_COORDS = { 0.8328, 0.9583 };             // Go / Find Match button
-    static double[] QUEUE_INDICATOR_COORDS = { 0.9609, 0.0593 }; // Top-right turns green when queuing
+    // Calibrated relative coordinates (0.0 to 1.0)
+    // 16:9 values (detected at runtime, used as primary)
+    static double[] PLAY_COORDS_16x9 = { 0.5193, 0.0343 };
+    static double[] MATCHMAKING_COORDS_16x9 = { 0.4281, 0.0796 };
+    static double[] PREMIER_COORDS_16x9 = { 0.3010, 0.1213 };
+    static double[] GO_COORDS_16x9 = { 0.8745, 0.9574 };
+    static double[] QUEUE_INDICATOR_COORDS_16x9 = { 0.9609, 0.0593 };
+
+    // 4:3 fallback values
+    static double[] PLAY_COORDS_4x3 = { 0.5255, 0.0343 };
+    static double[] MATCHMAKING_COORDS_4x3 = { 0.4036, 0.0796 };
+    static double[] PREMIER_COORDS_4x3 = { 0.2339, 0.1204 };
+    static double[] GO_COORDS_4x3 = { 0.8328, 0.9583 };
+    static double[] QUEUE_INDICATOR_COORDS_4x3 = { 0.9609, 0.0593 };
+
+    // Active coordinate set (set at startup based on detected aspect ratio)
+    static double[] PLAY_COORDS;
+    static double[] MATCHMAKING_COORDS;
+    static double[] PREMIER_COORDS;
+    static double[] GO_COORDS;
+    static double[] QUEUE_INDICATOR_COORDS;
 
     static int AFK_MIN_INTERVAL = 30; // seconds
     static int AFK_MAX_INTERVAL = 90; // seconds
@@ -893,6 +908,26 @@ class CS2Assistant
         }
     }
 
+    static public void SetAspectRatio(bool widescreen)
+    {
+        if (widescreen)
+        {
+            PLAY_COORDS = PLAY_COORDS_16x9;
+            MATCHMAKING_COORDS = MATCHMAKING_COORDS_16x9;
+            PREMIER_COORDS = PREMIER_COORDS_16x9;
+            GO_COORDS = GO_COORDS_16x9;
+            QUEUE_INDICATOR_COORDS = QUEUE_INDICATOR_COORDS_16x9;
+        }
+        else
+        {
+            PLAY_COORDS = PLAY_COORDS_4x3;
+            MATCHMAKING_COORDS = MATCHMAKING_COORDS_4x3;
+            PREMIER_COORDS = PREMIER_COORDS_4x3;
+            GO_COORDS = GO_COORDS_4x3;
+            QUEUE_INDICATOR_COORDS = QUEUE_INDICATOR_COORDS_4x3;
+        }
+    }
+
     static void Beep(int frequency, int duration)
     {
         try
@@ -999,6 +1034,27 @@ class CS2Assistant
         screenWidth = GetSystemMetrics(0);
         screenHeight = GetSystemMetrics(1);
 
+        // Detect aspect ratio and select matching coordinate set.
+        // 16:9 ≈ 1.778 (e.g. 1920x1080, 2560x1440). Anything wider is
+        // treated as widescreen too (21:9 etc). 4:3 ≈ 1.333 is the fallback.
+        double aspect = (double)screenWidth / screenHeight;
+        if (aspect >= 1.6)
+        {
+            PLAY_COORDS = PLAY_COORDS_16x9;
+            MATCHMAKING_COORDS = MATCHMAKING_COORDS_16x9;
+            PREMIER_COORDS = PREMIER_COORDS_16x9;
+            GO_COORDS = GO_COORDS_16x9;
+            QUEUE_INDICATOR_COORDS = QUEUE_INDICATOR_COORDS_16x9;
+        }
+        else
+        {
+            PLAY_COORDS = PLAY_COORDS_4x3;
+            MATCHMAKING_COORDS = MATCHMAKING_COORDS_4x3;
+            PREMIER_COORDS = PREMIER_COORDS_4x3;
+            GO_COORDS = GO_COORDS_4x3;
+            QUEUE_INDICATOR_COORDS = QUEUE_INDICATOR_COORDS_4x3;
+        }
+
         Application.EnableVisualStyles();
 
         // Create the GUI first so Log() calls below actually reach the log box
@@ -1050,6 +1106,8 @@ class AssistantForm : Form
     private CheckBox chkAccept;
     private CheckBox chkQueue;
     private CheckBox chkAfk;
+    private RadioButton rb16x9;
+    private RadioButton rb4x3;
     private Label lblUptime;
     private System.Windows.Forms.Timer timer;
     private DateTime startTime;
@@ -1167,6 +1225,36 @@ class AssistantForm : Form
         chkAfk.Size = new System.Drawing.Size(180, 25);
         chkAfk.CheckedChanged += ChkAfk_CheckedChanged;
         this.Controls.Add(chkAfk);
+
+        // Aspect ratio selector
+        Label lblAspect = new Label();
+        lblAspect.Text = "Aspect:";
+        lblAspect.Font = new System.Drawing.Font("Segoe UI", 9);
+        lblAspect.ForeColor = System.Drawing.Color.Gray;
+        lblAspect.Location = new System.Drawing.Point(200, 53);
+        lblAspect.AutoSize = true;
+        this.Controls.Add(lblAspect);
+
+        rb16x9 = new RadioButton();
+        rb16x9.Text = "16:9";
+        rb16x9.Font = new System.Drawing.Font("Segoe UI", 9);
+        rb16x9.ForeColor = System.Drawing.Color.White;
+        rb16x9.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+        rb16x9.Location = new System.Drawing.Point(200, 72);
+        rb16x9.Size = new System.Drawing.Size(70, 22);
+        rb16x9.Checked = true;
+        rb16x9.CheckedChanged += AspectRadio_Changed;
+        this.Controls.Add(rb16x9);
+
+        rb4x3 = new RadioButton();
+        rb4x3.Text = "4:3";
+        rb4x3.Font = new System.Drawing.Font("Segoe UI", 9);
+        rb4x3.ForeColor = System.Drawing.Color.White;
+        rb4x3.BackColor = System.Drawing.Color.FromArgb(30, 30, 30);
+        rb4x3.Location = new System.Drawing.Point(270, 72);
+        rb4x3.Size = new System.Drawing.Size(70, 22);
+        rb4x3.CheckedChanged += AspectRadio_Changed;
+        this.Controls.Add(rb4x3);
 
         // Buttons
         btnToggle = new Button();
@@ -1286,6 +1374,14 @@ class AssistantForm : Form
     private void ChkAfk_CheckedChanged(object sender, EventArgs e)
     {
         CS2Assistant.ANTI_AFK_ENABLED = chkAfk.Checked;
+    }
+
+    private void AspectRadio_Changed(object sender, EventArgs e)
+    {
+        if (rb16x9.Checked)
+            CS2Assistant.SetAspectRatio(true);
+        else if (rb4x3.Checked)
+            CS2Assistant.SetAspectRatio(false);
     }
 
     private void BtnToggle_Click(object sender, EventArgs e)
