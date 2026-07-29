@@ -1318,7 +1318,7 @@ class AssistantForm : Form
 
     private void InitializeComponents()
     {
-        this.Text = "CS2 Match Assistant v1.1";
+        this.Text = "CS2 Match Assistant v1.3";
         this.Size = new System.Drawing.Size(360, 460);
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.MaximizeBox = false;
